@@ -247,3 +247,42 @@ DB URL を未設定、または Supabase CLI 未導入の状態で再度 `pnpm -
 - Supabase CLI が無い/DB URL 未設定 → スタブ出力が正です。実 DB 型が必要なときのみ CLI と URL を設定してください。
 - Turbo のログで generate が先に走らない → ルート `turbo.json` の `dependsOn` を確認してください（本リポジトリは調整済み）。
 - 生成物をコミットすべきか → Week 1 では再現性確保のためコミット推奨です。
+
+### 7) Week 2 事前準備: Optimizer サービススタブ
+
+Week 2 では Python/FastAPI 製の Optimizer サービスをローカルで起動できることが前提になります。`services/optimizer-py` に最小構成のスタブを追加したので、以下の手順でセットアップしてください。
+
+1. 依存導入と仮想環境の有効化
+
+```bash
+cd services/optimizer-py
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -e .
+```
+
+2. サービス起動（デフォルトでポート 8001）
+
+```bash
+uvicorn optimizer_service.main:app --reload --port 8001
+```
+
+3. 動作確認
+
+```bash
+curl -s http://localhost:8001/health
+curl -s -X POST http://localhost:8001/optimize \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "origin": {"lat": 35.681236, "lng": 139.767125},
+    "destinations": [
+      {"id": "tokyo-tower", "label": "Tokyo Tower", "lat": 35.6586, "lng": 139.7454},
+      {"id": "shibuya", "label": "Shibuya", "lat": 35.6595, "lng": 139.7005}
+    ],
+    "options": {"strategy": "quality"}
+  }'
+```
+
+4. `.env.local` に `OPTIMIZER_SERVICE_URL=http://localhost:8001` を追記し、Next.js/tRPC からこのスタブへ接続できるようにします。
+
+> 備考: 現時点のスタブは最近傍法（Nearest Neighbor）でルートを計算する軽量実装です。Week 2 の tRPC/フロント実装をブロックしない目的のため、将来的に OR-Tools 実装へ差し替えることを想定しています。

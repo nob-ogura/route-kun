@@ -106,11 +106,50 @@ flowchart LR
 - 入力バリデーション: 住所リスト（1 行 1 件、最低 2 件＋出発地）・重複削除・空行除去・最大件数（MVP: 30）。
 - 距離行列: Google Distance Matrix を同期取得。キー（出発地/目的地/時刻）で Supabase にキャッシュ（TTL 24h）。
 - 最適化契約（Optimizer）
-  - 入力: 出発地座標、目的地座標配列、距離/時間行列、オプション（スピード重視/精度重視）。
-  - 出力: 訪問順序、総距離、推定時間、診断（反復回数・ギャップ）。
+  - JSON キーは FastAPI 実装に合わせて snake_case（`origin` / `destinations` / `distance_matrix` / `options` / `diagnostics`）で固定。packages/optimizer-client は TypeScript では camelCase（`fallbackTolerance` など）を公開し、送受信時に自動変換して差異を吸収する。
+  - リクエスト JSON
+
+    | Key | 型 / 制約 | 説明 |
+    | --- | --- | --- |
+    | `origin` | `Coordinates` `{ lat: number; lng: number }`（-90 ≦ lat ≦ 90, -180 ≦ lng ≦ 180） | 出発地（WGS84）。 |
+    | `destinations` | `DestinationStop[]`（1〜30 件）各要素 `{ id: string; lat: number; lng: number; label?: string }` | 最適化対象の停留所。`id` は visit_order で再利用する安定 ID。 |
+    | `distance_matrix` | 任意。`{ meters: number[][]; seconds: number[][] }`。行・列とも `origin + destinations` の順で同一サイズ、全要素 >= 0。 | Google Distance Matrix キャッシュをそのまま渡す。欠損時は Optimizer（または tRPC）がハバーサイン近似で代替。 |
+    | `options` | `OptimizerOptions`。省略時は defaults。 | 下表参照。 |
+
+    `Coordinates` / `DestinationStop` / `DistanceMatrix` は Zod でも同じ制約を持ち、shape 検証（row/column 数が一致すること）を tRPC 側でも実施する。
+
+  - レスポンス JSON
+
+    | Key | 型 | 説明 |
+    | --- | --- | --- |
+    | `route_id` | `string`（UUID v4） | Optimizer が発行する計算 ID。 |
+    | `visit_order` | `string[]` | `destinations[i].id` の順序リスト。 |
+    | `ordered_stops` | `OrderedStop[]` | 下表の構造体。 |
+    | `total_distance_m` | `number`（int, >= 0） | 全経路の合計距離（m）。 |
+    | `total_duration_s` | `number`（int, >= 0） | 全経路の合計時間（s）。 |
+    | `diagnostics` | `Diagnostics` | 解法の詳細（下表）。 |
+
+    `OrderedStop` 要素は `{ id, label?, lat, lng, sequence, distance_from_previous_m, duration_from_previous_s, cumulative_distance_m, cumulative_duration_s }` を返し、UI/DB がそのまま利用できる。`Diagnostics` は `{ strategy: "fast" \| "quality", solver: string, iterations: number, gap: number (0-1), fallback_used: boolean, execution_ms: number }`。
+
+  - `options` パラメータ（TypeScript 側 / ワイヤーフォーマットの両方を明記）
+
+    | クライアント側キー | ワイヤーキー | 型・範囲 | デフォルト | 振る舞い |
+    | --- | --- | --- | --- | --- |
+    | `strategy` | `strategy` | `"fast"` or `"quality"` | `"quality"` | `fast`: 近傍+局所探索で 10s 以内に収束、迭代数を 1k 付近に制限。`quality`: OR-Tools meta-heuristic を想定し 30s / 4k iteration まで粘る。 |
+    | `maxIterations` | `max_iterations` | `number` 10〜10,000 | 4,000 | Solver 側の iteration 上限。`fast` は 1,500 に丸める。 |
+    | `maxRuntimeSeconds` | `max_runtime_seconds` | `number` 1〜60 | 30 | 1 リクエスト当たりの計算時間上限。tRPC 側 budget（45s）に収まるよう 30s で固定。 |
+    | `fallbackTolerance` | `fallback_tolerance` | `number` 0.0〜1.0 | 0.15 | `diagnostics.gap` がこの閾値を超える、または Solver が `fallback_used` を true で返した場合は tRPC が近傍法フォールバックを採用し UI へ通知。 |
+
 - 可視化: Mapbox に GeoJSON を渡し、順序番号ピン・折れ線で描画。モバイル最適化（パン・ピン密度）。
 - 永続化: `routes` と `route_stops` に最適化結果を保存、再現可能性確保（入力スナップショットも保持）。
-- エラーハンドリング: Google/Optimizer のタイムアウト（30s）でフォールバック（最近傍法）。UI は非同期状態・再試行 UX を標準化。
+- エラーハンドリング: Google Geocode 6s / Distance Matrix 10s / Optimizer 30s のタイムアウト・429/5xx を捕捉し、必要に応じて最近傍法フォールバックとリトライ結果を UI に通知。UI は非同期状態・再試行 UX を標準化。
+- 外部 API タイムアウト / リトライ
+
+  | サービス | リクエストタイムアウト | リトライ & バックオフ | 方針 |
+  | --- | --- | --- | --- |
+  | Google Geocode API | 6s | 最大 2 回。指数バックオフ 0.5s → 1.5s（+10% ジッター）。4xx はリトライしない。 | 住所正規化は fail-fast で UX を守る。6s×3 回でも 18s 未満。 |
+  | Google Distance Matrix API | 10s | 最大 2 回。1s → 3s バックオフ（+ジッター）。429/5xx/Timeout のみリトライ。 | 目的地数に比例して遅延が伸びるため少し長め。E2E バジェット 30s 以内。 |
+  | Optimizer サービス | 30s | 最大 3 回。1s → 2s → 4s。失敗時は即座に近傍法フォールバックを返却。 | OR-Tools 版でも 30s を超えないよう `max_runtime_seconds` を固定。 |
 
 ---
 
