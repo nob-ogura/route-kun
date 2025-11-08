@@ -10,11 +10,13 @@
     "dev": "echo 'skip'",
     "typecheck": "echo 'ok'",
     "lint": "echo 'ok'",
-    "test": "echo 'ok'",
+    "test": "vitest run",
     "e2e": "echo 'ok'"
   },
   "dependencies": {
     "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.4"
   }
 }
-
