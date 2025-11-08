@@ -46,7 +46,7 @@
   - Google Geocode/Distance Matrix: 正常レスポンスとレート制限エラーのサンプル。
   - Optimizer: 成功ケース、タイムアウト、fallback 発動ケース。
 - モックデータは packages/optimizer-client の Zod スキーマを使ってバリデーションし、モックと実装の乖離を検出できるようにする。
-- contract test: Vitest でモックレスポンスを fetch し、クライアントが期待通りの DTO を返すことを確認（MSW をテストモードで起動）。
+- contract test（TDD）: まず期待する成功/失敗シナリオを Vitest で赤くし、MSW テストモードでモックレスポンスを fetch → クライアントが DTO を返すまでを実装して緑化する（失敗ケースは型不整合・HTTP エラー分類を最低 1 ケースずつ入れる）。
 - Playwright からも MSW を共有し、ブラウザ内の fetch が同一ダミーを参照するように設定（Service Worker or Mock Service Worker setup）。
 
 ---

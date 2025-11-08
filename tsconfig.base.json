@@ -16,7 +16,8 @@
       "@route-kun/api": ["packages/api/src"],
       "@route-kun/supabase": ["packages/supabase/src"],
       "@route-kun/ui": ["packages/ui/src"],
-      "@route-kun/optimizer-client": ["packages/optimizer-client/src"]
+      "@route-kun/optimizer-client": ["packages/optimizer-client/src"],
+      "@route-kun/msw": ["packages/msw/src"]
     }
   }
 }
