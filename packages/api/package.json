@@ -8,15 +8,22 @@
   "scripts": {
     "build": "echo 'skip'",
     "dev": "echo 'skip'",
-    "typecheck": "echo 'ok'",
+    "typecheck": "tsc --noEmit",
     "lint": "echo 'ok'",
-    "test": "echo 'ok'",
+    "test": "vitest run",
     "e2e": "echo 'ok'",
     "generate": "echo 'ok'"
   },
   "dependencies": {
+    "@route-kun/config": "workspace:*",
+    "@route-kun/domain": "workspace:*",
+    "@route-kun/optimizer-client": "workspace:*",
     "@trpc/server": "^10.45.2",
     "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@route-kun/msw": "workspace:*",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
   }
 }
-

@@ -61,10 +61,12 @@ describe('createOptimizerClient', () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('bad request', { status: 400 }));
     const client = createOptimizerClient({ baseUrl: 'http://optimizer.local', fetchImpl: fetchMock });
 
-    await expect(client.optimize(optimizerRequestFixture)).rejects.toMatchObject<Partial<OptimizerClientError>>({
+    const expectedError: Partial<OptimizerClientError> = {
       code: 'HTTP_4XX',
       status: 400
-    });
+    };
+
+    await expect(client.optimize(optimizerRequestFixture)).rejects.toMatchObject(expectedError);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -78,9 +80,11 @@ describe('createOptimizerClient', () => {
       retryDelaysMs: []
     });
 
-    await expect(client.optimize(optimizerRequestFixture)).rejects.toMatchObject<Partial<OptimizerClientError>>({
+    const expectedError: Partial<OptimizerClientError> = {
       code: 'TIMEOUT'
-    });
+    };
+
+    await expect(client.optimize(optimizerRequestFixture)).rejects.toMatchObject(expectedError);
   });
 
   it('surfaces decode failures with detailed context', async () => {
@@ -89,8 +93,10 @@ describe('createOptimizerClient', () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(brokenPayload));
     const client = createOptimizerClient({ baseUrl: 'http://optimizer.local', fetchImpl: fetchMock });
 
-    await expect(client.optimize(optimizerRequestFixture)).rejects.toMatchObject<Partial<OptimizerClientError>>({
+    const expectedError: Partial<OptimizerClientError> = {
       code: 'DECODE'
-    });
+    };
+
+    await expect(client.optimize(optimizerRequestFixture)).rejects.toMatchObject(expectedError);
   });
 });

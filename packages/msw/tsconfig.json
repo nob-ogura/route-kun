@@ -3,7 +3,8 @@
   "compilerOptions": {
     "composite": true,
     "declaration": true,
-    "outDir": "dist"
+    "outDir": "dist",
+    "rootDir": "../.."
   },
-  "include": ["src", "vitest.setup.ts"]
+  "include": ["src", "vitest.setup.ts", "../optimizer-client/src"]
 }

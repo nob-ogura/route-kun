@@ -53,13 +53,13 @@
 
 ## 4) tRPC `route.optimize` 実装（packages/api + apps/web）
 
-1. 入力 Zod スキーマを Week 1 の住所検証結果と結合し、座標化済みデータを受け取れるようにする（座標未確定の場合は Server Action 側でジオコーディングしておく）。
-2. 距離キャッシュ（docs/DistanceCacheDesign.md）を実装フェーズに移し、キー計算 → Supabase 読み書き → TTL 判定 → ミス時に Google 呼び出しを実行。
-3. Optimizer 呼び出しフロー:
-   - キャッシュ済み距離行列を整形し、packages/optimizer-client で HTTP 呼び出し。
-   - 30s 超過 or 5xx 時は最近傍法フォールバック（packages/domain に実装）を発動し、UI に fallback 情報を返す。
-4. 結果を Supabase に保存（`routes` ヘッダ、`route_stops` 詳細、入力ダイジェスト）し、DB トランザクション内で整合性を確保。
-5. 応答には UI が必要とするフィールド（ルート ID、GeoJSON、合計距離/時間、fallback フラグ）を含める。
+1. 入力 Zod スキーマは Week 1 の住所検証結果と結合した fixture を先に用意し、必須/任意フィールドや座標確定済みケースがバリデーションを通ることを Vitest で赤→緑にする（座標が無い場合は Server Action 側でジオコーディング済みであることもテストで保証）。
+2. 距離キャッシュ（docs/DistanceCacheDesign.md）はキー計算・TTL 判定・Supabase 読み書きの単体テストを最初に作成し、TDD でキャッシュヒット/ミス/エラーを実装。Google 呼び出しは MSW のモックで差し替え、キャッシュポリシーの挙動をテストで固定化する。
+3. Optimizer 呼び出しフローは contract test と統合テストから着手し、
+   - キャッシュ済み距離行列から packages/optimizer-client へ渡す DTO 整形をテストで先に定義。
+   - 30s 超過 or 5xx をシミュレートするテストを追加し、最近傍法フォールバック（packages/domain）の発火条件と UI への fallback 情報返却を TDD で固める。
+4. Supabase 保存は `routes` / `route_stops` / 入力ダイジェストのトランザクション完了を期待する統合テストを先に書き、RLS 準拠で一貫性を保つ実装を行う。
+5. 応答スキーマは UI が要求するフィールド（ルート ID、GeoJSON、合計距離/時間、fallback フラグ）を返すことを tRPC handler のテストで検証し、ドメインロジック→API→UI までを TDD 前提で結合させる。
 
 ---
 

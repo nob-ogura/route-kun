@@ -41,6 +41,13 @@
 - テスト: Vitest（単体/統合）、Testing Library、MSW（モック）、fast-check（性質ベース）、Playwright（E2E・a11y）
 - モノレポ: pnpm + Turborepo（キャッシュ・分割・開発速度）
 
+- TypeScript ビルド戦略
+  - 開発フェーズ（Week 1-2）: Vitest による型チェックとテスト実行。`composite: false` で運用し、プロジェクト参照なしの単純構成を維持。
+  - 本番ビルド導入時（Week 3-4）: `tsc --build` とプロジェクト参照（project references）を導入するタイミングで `composite: true` に変更。
+    - 目的: モノレポ全体のインクリメンタルビルド、パッケージ間の依存関係とビルド順序の自動管理、型定義の整合性保証。
+    - 設定箇所: 各パッケージの `tsconfig.json` で `composite: true` を有効化し、`references` フィールドで依存パッケージを指定。
+  - トレードオフ: `composite: true` は `.d.ts` 生成を強制し、ビルド時間は増えるが、モノレポの型安全性と CI/CD での並列ビルド効率が向上。MVP 初期は不要だが、Week 3 以降の本番デプロイ準備で導入推奨。
+
 ---
 
 ## 3) システム構成・データフロー
@@ -109,47 +116,47 @@ flowchart LR
   - JSON キーは FastAPI 実装に合わせて snake_case（`origin` / `destinations` / `distance_matrix` / `options` / `diagnostics`）で固定。packages/optimizer-client は TypeScript では camelCase（`fallbackTolerance` など）を公開し、送受信時に自動変換して差異を吸収する。
   - リクエスト JSON
 
-    | Key | 型 / 制約 | 説明 |
-    | --- | --- | --- |
-    | `origin` | `Coordinates` `{ lat: number; lng: number }`（-90 ≦ lat ≦ 90, -180 ≦ lng ≦ 180） | 出発地（WGS84）。 |
-    | `destinations` | `DestinationStop[]`（1〜30 件）各要素 `{ id: string; lat: number; lng: number; label?: string }` | 最適化対象の停留所。`id` は visit_order で再利用する安定 ID。 |
+    | Key               | 型 / 制約                                                                                                               | 説明                                                                                                         |
+    | ----------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+    | `origin`          | `Coordinates` `{ lat: number; lng: number }`（-90 ≦ lat ≦ 90, -180 ≦ lng ≦ 180）                                        | 出発地（WGS84）。                                                                                            |
+    | `destinations`    | `DestinationStop[]`（1〜30 件）各要素 `{ id: string; lat: number; lng: number; label?: string }`                        | 最適化対象の停留所。`id` は visit_order で再利用する安定 ID。                                                |
     | `distance_matrix` | 任意。`{ meters: number[][]; seconds: number[][] }`。行・列とも `origin + destinations` の順で同一サイズ、全要素 >= 0。 | Google Distance Matrix キャッシュをそのまま渡す。欠損時は Optimizer（または tRPC）がハバーサイン近似で代替。 |
-    | `options` | `OptimizerOptions`。省略時は defaults。 | 下表参照。 |
+    | `options`         | `OptimizerOptions`。省略時は defaults。                                                                                 | 下表参照。                                                                                                   |
 
     `Coordinates` / `DestinationStop` / `DistanceMatrix` は Zod でも同じ制約を持ち、shape 検証（row/column 数が一致すること）を tRPC 側でも実施する。
 
   - レスポンス JSON
 
-    | Key | 型 | 説明 |
-    | --- | --- | --- |
-    | `route_id` | `string`（UUID v4） | Optimizer が発行する計算 ID。 |
-    | `visit_order` | `string[]` | `destinations[i].id` の順序リスト。 |
-    | `ordered_stops` | `OrderedStop[]` | 下表の構造体。 |
-    | `total_distance_m` | `number`（int, >= 0） | 全経路の合計距離（m）。 |
-    | `total_duration_s` | `number`（int, >= 0） | 全経路の合計時間（s）。 |
-    | `diagnostics` | `Diagnostics` | 解法の詳細（下表）。 |
+    | Key                | 型                    | 説明                                |
+    | ------------------ | --------------------- | ----------------------------------- |
+    | `route_id`         | `string`（UUID v4）   | Optimizer が発行する計算 ID。       |
+    | `visit_order`      | `string[]`            | `destinations[i].id` の順序リスト。 |
+    | `ordered_stops`    | `OrderedStop[]`       | 下表の構造体。                      |
+    | `total_distance_m` | `number`（int, >= 0） | 全経路の合計距離（m）。             |
+    | `total_duration_s` | `number`（int, >= 0） | 全経路の合計時間（s）。             |
+    | `diagnostics`      | `Diagnostics`         | 解法の詳細（下表）。                |
 
     `OrderedStop` 要素は `{ id, label?, lat, lng, sequence, distance_from_previous_m, duration_from_previous_s, cumulative_distance_m, cumulative_duration_s }` を返し、UI/DB がそのまま利用できる。`Diagnostics` は `{ strategy: "fast" \| "quality", solver: string, iterations: number, gap: number (0-1), fallback_used: boolean, execution_ms: number }`。
 
   - `options` パラメータ（TypeScript 側 / ワイヤーフォーマットの両方を明記）
 
-    | クライアント側キー | ワイヤーキー | 型・範囲 | デフォルト | 振る舞い |
-    | --- | --- | --- | --- | --- |
-    | `strategy` | `strategy` | `"fast"` or `"quality"` | `"quality"` | `fast`: 近傍+局所探索で 10s 以内に収束、迭代数を 1k 付近に制限。`quality`: OR-Tools meta-heuristic を想定し 30s / 4k iteration まで粘る。 |
-    | `maxIterations` | `max_iterations` | `number` 10〜10,000 | 4,000 | Solver 側の iteration 上限。`fast` は 1,500 に丸める。 |
-    | `maxRuntimeSeconds` | `max_runtime_seconds` | `number` 1〜60 | 30 | 1 リクエスト当たりの計算時間上限。tRPC 側 budget（45s）に収まるよう 30s で固定。 |
-    | `fallbackTolerance` | `fallback_tolerance` | `number` 0.0〜1.0 | 0.15 | `diagnostics.gap` がこの閾値を超える、または Solver が `fallback_used` を true で返した場合は tRPC が近傍法フォールバックを採用し UI へ通知。 |
+    | クライアント側キー  | ワイヤーキー          | 型・範囲                | デフォルト  | 振る舞い                                                                                                                                      |
+    | ------------------- | --------------------- | ----------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+    | `strategy`          | `strategy`            | `"fast"` or `"quality"` | `"quality"` | `fast`: 近傍+局所探索で 10s 以内に収束、迭代数を 1k 付近に制限。`quality`: OR-Tools meta-heuristic を想定し 30s / 4k iteration まで粘る。     |
+    | `maxIterations`     | `max_iterations`      | `number` 10〜10,000     | 4,000       | Solver 側の iteration 上限。`fast` は 1,500 に丸める。                                                                                        |
+    | `maxRuntimeSeconds` | `max_runtime_seconds` | `number` 1〜60          | 30          | 1 リクエスト当たりの計算時間上限。tRPC 側 budget（45s）に収まるよう 30s で固定。                                                              |
+    | `fallbackTolerance` | `fallback_tolerance`  | `number` 0.0〜1.0       | 0.15        | `diagnostics.gap` がこの閾値を超える、または Solver が `fallback_used` を true で返した場合は tRPC が近傍法フォールバックを採用し UI へ通知。 |
 
 - 可視化: Mapbox に GeoJSON を渡し、順序番号ピン・折れ線で描画。モバイル最適化（パン・ピン密度）。
 - 永続化: `routes` と `route_stops` に最適化結果を保存、再現可能性確保（入力スナップショットも保持）。
 - エラーハンドリング: Google Geocode 6s / Distance Matrix 10s / Optimizer 30s のタイムアウト・429/5xx を捕捉し、必要に応じて最近傍法フォールバックとリトライ結果を UI に通知。UI は非同期状態・再試行 UX を標準化。
 - 外部 API タイムアウト / リトライ
 
-  | サービス | リクエストタイムアウト | リトライ & バックオフ | 方針 |
-  | --- | --- | --- | --- |
-  | Google Geocode API | 6s | 最大 2 回。指数バックオフ 0.5s → 1.5s（+10% ジッター）。4xx はリトライしない。 | 住所正規化は fail-fast で UX を守る。6s×3 回でも 18s 未満。 |
-  | Google Distance Matrix API | 10s | 最大 2 回。1s → 3s バックオフ（+ジッター）。429/5xx/Timeout のみリトライ。 | 目的地数に比例して遅延が伸びるため少し長め。E2E バジェット 30s 以内。 |
-  | Optimizer サービス | 30s | 最大 3 回。1s → 2s → 4s。失敗時は即座に近傍法フォールバックを返却。 | OR-Tools 版でも 30s を超えないよう `max_runtime_seconds` を固定。 |
+  | サービス                   | リクエストタイムアウト | リトライ & バックオフ                                                          | 方針                                                                  |
+  | -------------------------- | ---------------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
+  | Google Geocode API         | 6s                     | 最大 2 回。指数バックオフ 0.5s → 1.5s（+10% ジッター）。4xx はリトライしない。 | 住所正規化は fail-fast で UX を守る。6s×3 回でも 18s 未満。           |
+  | Google Distance Matrix API | 10s                    | 最大 2 回。1s → 3s バックオフ（+ジッター）。429/5xx/Timeout のみリトライ。     | 目的地数に比例して遅延が伸びるため少し長め。E2E バジェット 30s 以内。 |
+  | Optimizer サービス         | 30s                    | 最大 3 回。1s → 2s → 4s。失敗時は即座に近傍法フォールバックを返却。            | OR-Tools 版でも 30s を超えないよう `max_runtime_seconds` を固定。     |
 
 ---
 
@@ -270,8 +277,8 @@ erDiagram
 
 - Week 1: モノレポ初期化、型生成パイプライン、住所入力・バリデーション（Red→Green）、距離キャッシュ設計、E2E 初動。
 - Week 2: Optimizer クライアント契約確定、MSW モック、最適化フロー（tRPC）実装、結果保存、基本 UI/地図描画。
-- Week 3: 観測性・レート制限・RLS 仕上げ、a11y/E2E 安定化、キャッシュ・フォールバック導入、パフォーマンス計測。
-- Week 4: 仕上げ（UX 改善・モバイル最適化）、ドキュメント整備、デプロイ、運用監視基盤。
+- Week 3: 観測性・レート制限・RLS 仕上げ、a11y/E2E 安定化、キャッシュ・フォールバック導入、パフォーマンス計測。**TypeScript プロジェクト参照（`composite: true`）と `tsc --build` の導入を検討開始**。
+- Week 4: 仕上げ（UX 改善・モバイル最適化）、ドキュメント整備、デプロイ、運用監視基盤。**本番ビルドパイプラインで `tsc --build` を統合し、モノレポ全体のインクリメンタルビルドを確立**。
 
 ---
 

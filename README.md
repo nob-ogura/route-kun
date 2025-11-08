@@ -286,3 +286,20 @@ curl -s -X POST http://localhost:8001/optimize \
 4. `.env.local` に `OPTIMIZER_SERVICE_URL=http://localhost:8001` を追記し、Next.js/tRPC からこのスタブへ接続できるようにします。
 
 > 備考: 現時点のスタブは最近傍法（Nearest Neighbor）でルートを計算する軽量実装です。Week 2 の tRPC/フロント実装をブロックしない目的のため、将来的に OR-Tools 実装へ差し替えることを想定しています。
+
+### 8) Week 2: 現時点で実行できるテスト
+
+前提: Node.js 20 / pnpm 10 で `pnpm install` 済み、`.env.local` をコピー済みであれば追加のセットアップは不要です（Python 製 Optimizer スタブを起動していなくても問題ありません）。
+
+| 用途                       | コマンド                                   | 主な対象                                                                                                         | 備考                                                                                                         |
+| -------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| ルート全体のスモーク       | `pnpm test`                                | Turbo が各パッケージの `generate → typecheck → test` を順番に実行                                                | 2 秒前後で完走。`packages/msw` の型チェックで `@route-kun/optimizer-client` 依存もまとめて検証されます。     |
+| Next.js UI 単体            | `pnpm -F web test`                         | `apps/web/app/address-form.test.tsx`（住所フォームの UX テスト）                                                 | Vitest + Testing Library（jsdom）。開発中は `pnpm -F web test -- --watch` で常時監視できます。               |
+| ドメインロジック           | `pnpm -F @route-kun/domain test`           | `packages/domain/src/address-list.test.ts`（住所正規化/重複排除）                                                | Zod スキーマで空行・全角スペース・重複チェックを網羅。ビルド不要。                                           |
+| Optimizer クライアント     | `pnpm -F @route-kun/optimizer-client test` | `src/http-client.test.ts`, `src/schemas.test.ts`（リトライ/タイムアウト/スキーマ変換）                           | fetch モックを使うため、実際の Optimizer サービスは不要。                                                    |
+| Optimizer MSW コントラクト | `pnpm -F @route-kun/msw test`              | `packages/msw/src/contracts/optimizer-contract.test.ts`（ハッピーパス/フォールバック/タイムアウト/5xx シナリオ） | Node 版 MSW サーバを Vitest で立ち上げ、`@route-kun/optimizer-client` のスタブ呼び出しをエミュレートします。 |
+
+補足:
+- いずれのテストも `pnpm -F <package> test -- --watch` でウォッチモードに切り替えられます。
+- `web`/`msw` のテストは実ブラウザや Python サービスを使いません。外部 API を叩かないため、CI でもそのまま実行可能です。
+- `pnpm -F web e2e` など E2E 用スクリプトはまだスタブ（`echo '(no e2e)'`）なので、Week 2 では上記のユニットテストを正として扱ってください。
