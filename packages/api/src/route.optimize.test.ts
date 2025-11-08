@@ -7,6 +7,7 @@ import {
 } from '@route-kun/msw';
 import { createOptimizerClient } from '@route-kun/optimizer-client';
 
+import { createInMemoryRouteRepository } from './route-repository';
 import { createAppRouter } from './router';
 
 const origin = {
@@ -27,8 +28,10 @@ const baseInput = {
   destinations
 };
 
-const createCaller = (overrides?: Parameters<typeof createAppRouter>[0]) =>
-  createAppRouter(overrides).createCaller({});
+const createCaller = (
+  overrides?: Parameters<typeof createAppRouter>[0],
+  ctx: { userId: string } = { userId: 'test-user' }
+) => createAppRouter(overrides).createCaller(ctx);
 
 beforeAll(() => mockServer.listen());
 afterEach(() => mockServer.resetHandlers());
@@ -85,5 +88,30 @@ describe('route.optimize tRPC procedure', () => {
     expect(response.diagnostics.fallbackUsed).toBe(true);
     expect(response.diagnostics.fallbackReason).toBe('optimizer_error');
     expect(response.diagnostics.optimizerErrorCode).toBe('HTTP_5XX');
+  });
+});
+
+describe('route history APIs', () => {
+  it('persists optimized routes and exposes list/get results', async () => {
+    const routeRepository = createInMemoryRouteRepository();
+    const caller = createCaller({ routeRepository });
+
+    const optimizeResult = await caller.route.optimize(baseInput);
+    const list = await caller.route.list({});
+
+    expect(list.routes).toHaveLength(1);
+    expect(list.routes[0]?.routeId).toBe(optimizeResult.plan.routeId);
+    expect(list.routes[0]?.diagnostics.fallbackUsed).toBe(false);
+
+    const detail = await caller.route.get({ routeId: optimizeResult.plan.routeId });
+    expect(detail).not.toBeNull();
+    expect(detail?.stops.length).toBeGreaterThan(0);
+    expect(detail?.origin.id).toBe(origin.id);
+  });
+
+  it('returns null when a route cannot be found', async () => {
+    const caller = createCaller();
+    const detail = await caller.route.get({ routeId: '00000000-0000-0000-0000-000000000000' });
+    expect(detail).toBeNull();
   });
 });

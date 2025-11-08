@@ -174,6 +174,7 @@ flowchart LR
   - route.optimize: 入力検証 → 距離行列取得/キャッシュ → Optimizer 呼び出し → DB 保存 → 結果返却
   - route.list: 直近のルート概要をページングで返却
   - route.get: ルート詳細（ stops を含む）返却
+  - いずれの `route.*` も `ctx.userId` を前提にし、Supabase へ保存/参照する前に認証済みユーザー ID を必ず受け渡す（RLS が `auth.uid()` を要求するため）。
 
 - Zod スキーマ（方針）
   - 入力: 出発地（住所/座標）、目的地リスト（住所/座標）、最適化オプション
@@ -181,6 +182,7 @@ flowchart LR
 
 - RLS 方針
   - routes/route_stops は `user_id = auth.uid()` のみ参照・作成可。distance_cache はサービスロール限定。
+  - 認証の無いリクエストは DB レイヤーで弾かれるため、tRPC では `ctx.userId` を持たない状態で決して保存/取得を試みない。
 
 ```mermaid
 erDiagram

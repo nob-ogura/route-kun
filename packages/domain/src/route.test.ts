@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { createRouteGeoJson, computeNearestNeighborPlan, RoutePlan, RouteStop } from './route';
+import {
+  computeRouteParamsDigest,
+  createRouteGeoJson,
+  computeNearestNeighborPlan,
+  RoutePlan,
+  RouteStop
+} from './route';
 
 const origin: RouteStop = {
   id: 'origin',
@@ -67,5 +73,43 @@ describe('createRouteGeoJson', () => {
       expect(line.geometry.coordinates).toHaveLength(2);
       expect(line.geometry.coordinates[0]).toEqual(line.geometry.coordinates[1]);
     }
+  });
+});
+
+describe('computeRouteParamsDigest', () => {
+  it('produces the same digest for equivalent payloads', () => {
+    const digestA = computeRouteParamsDigest({
+      origin,
+      destinations,
+      options: {
+        strategy: 'quality',
+        fallbackTolerance: 0.15,
+        maxIterations: 4000,
+        maxRuntimeSeconds: 30
+      }
+    });
+
+    const digestB = computeRouteParamsDigest({
+      origin: { ...origin, lat: origin.lat + 1e-7 },
+      destinations: destinations.map((stop) => ({ ...stop })),
+      options: {
+        strategy: 'quality',
+        fallbackTolerance: 0.15009,
+        maxIterations: 4000.4,
+        maxRuntimeSeconds: 30
+      }
+    });
+
+    expect(digestA).toBe(digestB);
+  });
+
+  it('changes when destinations differ', () => {
+    const digestA = computeRouteParamsDigest({ origin, destinations });
+    const digestB = computeRouteParamsDigest({
+      origin,
+      destinations: destinations.slice().reverse()
+    });
+
+    expect(digestA).not.toBe(digestB);
   });
 });

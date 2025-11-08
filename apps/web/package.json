@@ -10,7 +10,7 @@
     "lint": "next lint",
     "test": "vitest run",
     "e2e": "echo '(no e2e)'",
-    "generate": "echo '(no generate)'"
+    "generate": "node scripts/generate-placeholder.mjs"
   },
   "dependencies": {
     "@route-kun/api": "workspace:*",

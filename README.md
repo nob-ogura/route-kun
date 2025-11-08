@@ -303,3 +303,27 @@ curl -s -X POST http://localhost:8001/optimize \
 - いずれのテストも `pnpm -F <package> test -- --watch` でウォッチモードに切り替えられます。
 - `web`/`msw` のテストは実ブラウザや Python サービスを使いません。外部 API を叩かないため、CI でもそのまま実行可能です。
 - `pnpm -F web e2e` など E2E 用スクリプトはまだスタブ（`echo '(no e2e)'`）なので、Week 2 では上記のユニットテストを正として扱ってください。
+
+### Week 2: 結果保存・履歴 API チェックリスト
+
+1. Supabase のマイグレーションを適用して、新しい `routes` / `route_stops` テーブルと RLS ポリシーを確実に作成します。
+
+   ```bash
+   cd packages/supabase
+
+   # (初回のみ) Supabase CLI にサインイン
+   pnpm -F @route-kun/supabase exec supabase login
+
+   # (初回のみ) 対象プロジェクトへリンク
+   pnpm -F @route-kun/supabase exec supabase link --project-ref <YOUR_PROJECT_REF>
+
+   # (リンク済み後) マイグレーションをプッシュ
+   pnpm -F @route-kun/supabase exec supabase db push
+   ```
+
+   > `supabase link` は Supabase ダッシュボードの Project Ref（Settings → General）と Database Password（Settings → Database → Connection string）を使用します。CLI は `packages/supabase/.supabase` にリンク情報を保存しますが、個人環境専用なのでリポジトリにはコミットしないでください。リンクせずに実行したい場合は `supabase db push --db-url "$DATABASE_URL"` を使い、`DATABASE_URL`/`SUPABASE_DB_URL` にリモート DB の接続文字列を設定してください。CLI が見つからない場合は `pnpm --filter @route-kun/supabase add -D supabase --allow-build=supabase && pnpm -F @route-kun/supabase exec supabase db push`、`pnpm dlx supabase@latest db push`、または `npm i -g supabase` などで導入できます。
+
+2. tRPC ルーターを呼び出す際は `{ userId }` を必ずコンテキストに渡してください（`route.*` プロシージャは認証済みコンテキストを必須化済み）。
+
+   > `ctx.userId` が無いと Supabase の `routes` / `route_stops` RLS が即座に拒否するため、API は保存も履歴参照もできません。UI/テスト/スクリプトのいずれでも、`route.*` を叩く前に認証済みユーザー ID をセットしてください。
+3. 依存関係をインストールしたら `pnpm --filter @route-kun/domain test` と `pnpm --filter @route-kun/api test` を実行し、結果保存・履歴 API を含むドメイン/サーバ層のテストを再確認してください。

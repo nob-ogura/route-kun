@@ -61,12 +61,17 @@
 4. Supabase 保存は `routes` / `route_stops` / 入力ダイジェストのトランザクション完了を期待する統合テストを先に書き、RLS 準拠で一貫性を保つ実装を行う。
 5. 応答スキーマは UI が要求するフィールド（ルート ID、GeoJSON、合計距離/時間、fallback フラグ）を返すことを tRPC handler のテストで検証し、ドメインロジック→API→UI までを TDD 前提で結合させる。
 
+> 重要: `route.*` ハンドラ/テストはすべて `ctx.userId`（認証済みユーザー）を受け取り、Supabase 保存や履歴取得の直前に必ず渡すこと。これが欠けると RLS に阻まれて DB read/write が失敗し、Week 2 の結果保存フローが成立しません。
+
 ---
 
 ## 5) 結果保存・履歴 API の整備
 
+- 実装方針
+  - 「純粋ロジック」と「DB 契約」を分離したハイブリッド TDD を採用し、API 仕様や整合性チェックはユニットで確定させる。
+  - RLS／マイグレーションを含む DB 振る舞いは Supabase との統合テストで TDD を回す（ユニットでは扱わない）。
 - Supabase クエリモジュール（packages/supabase）に以下を追加。
-  - `saveRouteResult`: routes / route_stops のバルク挿入。RLS を満たすため user_id を全レコードに付与。
+  - `saveRouteResult`: routes / route_stops のバルク挿入。RLS を満たすため user_id を全レコードに付与し、呼び出し元は `ctx.userId` を必ず引き渡す。
   - `listRoutes`, `getRoute`: Week 3 以降に備えた参照 API も雛形を作成（スコープ外機能は TODO コメントで区切る）。
 - データ完全性チェック
   - params_digest を計算して保存し、同一入力からの重複実行を後で識別できるようにする。

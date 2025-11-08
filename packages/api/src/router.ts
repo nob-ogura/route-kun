@@ -1,5 +1,6 @@
 import { loadEnv } from '@route-kun/config';
 import {
+  computeRouteParamsDigest,
   createRouteGeoJson,
   computeNearestNeighborPlan,
   RoutePlan as DomainRoutePlan,
@@ -18,10 +19,33 @@ import {
   OptimizerResponse,
   OrderedStopSchema
 } from '@route-kun/optimizer-client';
-import { initTRPC } from '@trpc/server';
+import { initTRPC, TRPCError } from '@trpc/server';
 import { z } from 'zod';
 
-const t = initTRPC.create();
+import { createSupabaseClient, Json, RouteAlgorithm } from '@route-kun/supabase';
+
+import {
+  createInMemoryRouteRepository,
+  createSupabaseRouteRepository,
+  type RouteRepository,
+  type RouteRepositorySavePayload,
+  type RouteRepositoryListResult,
+  type RouteRepositoryDetail
+} from './route-repository';
+
+type AppRouterContext = {
+  userId: string;
+};
+
+const t = initTRPC.context<AppRouterContext>().create();
+
+const authedProcedure = t.procedure.use(({ ctx, next }) => {
+  if (!ctx.userId) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'User context is required' });
+  }
+
+  return next({ ctx });
+});
 
 type RoutePlanWithId = DomainRoutePlan & { routeId: string };
 
@@ -100,6 +124,8 @@ const RoutePlanSchema = z.object({
   totalDurationS: z.number().int().nonnegative()
 });
 
+const RouteAlgorithmSchema = z.enum(['optimizer', 'nearest_neighbor']);
+
 const FallbackReasonSchema = z.enum([
   'optimizer_gap_exceeded',
   'optimizer_fallback_signaled',
@@ -129,6 +155,45 @@ const RouteOptimizeResultSchema = z.object({
   diagnostics: RouteDiagnosticsSchema
 });
 
+const RouteSummarySchema = z.object({
+  routeId: z.string().uuid(),
+  createdAt: z.string().datetime(),
+  algorithm: RouteAlgorithmSchema,
+  destinationCount: z.number().int().nonnegative(),
+  totalDistanceM: z.number().int().nonnegative(),
+  totalDurationS: z.number().int().nonnegative(),
+  paramsDigest: z.string().min(1),
+  diagnostics: RouteDiagnosticsSchema
+});
+
+const RouteStopRecordSchema = OrderedStopSchema.extend({
+  routeStopId: z.string().min(1),
+  rawInput: z.any(),
+  createdAt: z.string().datetime()
+});
+
+const RouteDetailSchema = RouteSummarySchema.extend({
+  origin: RouteStopSchema,
+  paramsSnapshot: z.any(),
+  distanceCacheHitCount: z.number().int().nonnegative(),
+  distanceCacheMissCount: z.number().int().nonnegative(),
+  stops: z.array(RouteStopRecordSchema)
+});
+
+const RouteListInputSchema = z.object({
+  limit: z.number().int().min(1).max(50).optional(),
+  cursor: z.string().datetime().optional()
+});
+
+const RouteListResultSchema = z.object({
+  routes: z.array(RouteSummarySchema),
+  nextCursor: z.string().datetime().nullable()
+});
+
+const RouteGetInputSchema = z.object({
+  routeId: z.string().uuid()
+});
+
 type RouteOptimizeInput = z.infer<typeof RouteOptimizeInputSchema>;
 export type RouteOptimizeResult = z.infer<typeof RouteOptimizeResultSchema>;
 
@@ -138,6 +203,29 @@ type RouteOptimizationDependencies = {
   optimizerClient: OptimizerClient;
   fallbackPlanner: typeof computeNearestNeighborPlan;
   routeIdGenerator: () => string;
+  routeRepository: RouteRepository;
+};
+
+const createRouteRepository = (env: ReturnType<typeof loadEnv>): RouteRepository => {
+  const logWarnings = env.NODE_ENV !== 'test';
+
+  if (env.SUPABASE_URL && (env.SUPABASE_SERVICE_ROLE_KEY || env.SUPABASE_ANON_KEY)) {
+    try {
+      const client = createSupabaseClient({
+        url: env.SUPABASE_URL,
+        key: env.SUPABASE_SERVICE_ROLE_KEY ?? env.SUPABASE_ANON_KEY
+      });
+      return createSupabaseRouteRepository(client);
+    } catch (error) {
+      if (logWarnings) {
+        console.warn('[route.repository] Falling back to in-memory repository', error);
+      }
+    }
+  } else if (logWarnings) {
+    console.warn('[route.repository] Supabase credentials missing; using in-memory repository');
+  }
+
+  return createInMemoryRouteRepository();
 };
 
 const createDefaultDependencies = (): RouteOptimizationDependencies => {
@@ -153,7 +241,8 @@ const createDefaultDependencies = (): RouteOptimizationDependencies => {
         return crypto.randomUUID();
       }
       return `route_${Math.random().toString(36).slice(2)}`;
-    }
+    },
+    routeRepository: createRouteRepository(env)
   };
 };
 
@@ -163,6 +252,133 @@ const toDestination = (stop: RouteStop) => ({
   lat: stop.lat,
   lng: stop.lng
 });
+
+const snapshotStop = (stop: RouteStop) => ({
+  id: stop.id,
+  label: stop.label ?? null,
+  lat: stop.lat,
+  lng: stop.lng
+});
+
+const buildStopLookup = (origin: RouteStop, destinations: RouteStop[]) => {
+  const lookup = new Map<string, RouteStop>();
+  lookup.set(origin.id, origin);
+  destinations.forEach((stop) => lookup.set(stop.id, stop));
+  return lookup;
+};
+
+const buildPersistenceStops = (
+  orderedStops: RoutePlanWithId['orderedStops'],
+  lookup: Map<string, RouteStop>
+): RouteRepositorySavePayload['orderedStops'] =>
+  orderedStops.map((stop) => ({
+    id: stop.id,
+    label: stop.label ?? null,
+    lat: stop.lat,
+    lng: stop.lng,
+    sequence: stop.sequence,
+    distanceFromPreviousM: stop.distanceFromPreviousM,
+    durationFromPreviousS: stop.durationFromPreviousS,
+    cumulativeDistanceM: stop.cumulativeDistanceM,
+    cumulativeDurationS: stop.cumulativeDurationS,
+    rawInput:
+      lookup.get(stop.id) !== undefined
+        ? snapshotStop(lookup.get(stop.id)!)
+        : {
+            id: stop.id,
+            label: stop.label ?? null,
+            lat: stop.lat,
+            lng: stop.lng
+          }
+  }));
+
+const buildParamsSnapshot = (
+  input: RouteOptimizeInput,
+  optimizerOptions: OptimizerOptions
+): Json => ({
+  origin: snapshotStop(input.origin),
+  destinations: input.destinations.map((stop) => snapshotStop(stop)),
+  options: optimizerOptions
+});
+
+const buildSavePayload = (options: {
+  userId: string;
+  input: RouteOptimizeInput;
+  plan: RoutePlanWithId;
+  optimizerOptions: OptimizerOptions;
+  diagnostics: RouteOptimizeResult['diagnostics'];
+  paramsDigest: string;
+  paramsSnapshot: Json;
+  stopLookup: Map<string, RouteStop>;
+  algorithm: RouteAlgorithm;
+}): RouteRepositorySavePayload => ({
+  userId: options.userId,
+  routeId: options.plan.routeId,
+  algorithm: options.algorithm,
+  origin: snapshotStop(options.input.origin),
+  orderedStops: buildPersistenceStops(options.plan.orderedStops, options.stopLookup),
+  totalDistanceM: options.plan.totalDistanceM,
+  totalDurationS: options.plan.totalDurationS,
+  paramsDigest: options.paramsDigest,
+  paramsSnapshot: options.paramsSnapshot,
+  diagnostics: options.diagnostics,
+  distanceCacheMetrics: {
+    hits: 0,
+    misses: 0
+  }
+});
+
+type RouteHistorySummary = RouteRepositoryListResult['routes'][number];
+type RouteHistoryDetail = RouteRepositoryDetail;
+
+const normalizeLabel = (label?: string | null) => label ?? undefined;
+
+const mapRouteSummary = (record: RouteHistorySummary) =>
+  RouteSummarySchema.parse({
+    routeId: record.routeId,
+    createdAt: record.createdAt,
+    algorithm: record.algorithm,
+    destinationCount: record.destinationCount,
+    totalDistanceM: record.totalDistanceM,
+    totalDurationS: record.totalDurationS,
+    paramsDigest: record.paramsDigest,
+    diagnostics: record.diagnostics
+  });
+
+const mapRouteDetail = (record: RouteHistoryDetail) =>
+  RouteDetailSchema.parse({
+    routeId: record.routeId,
+    createdAt: record.createdAt,
+    algorithm: record.algorithm,
+    destinationCount: record.destinationCount,
+    totalDistanceM: record.totalDistanceM,
+    totalDurationS: record.totalDurationS,
+    paramsDigest: record.paramsDigest,
+    diagnostics: record.diagnostics,
+    origin: {
+      id: record.origin.id,
+      label: normalizeLabel(record.origin.label),
+      lat: record.origin.lat,
+      lng: record.origin.lng
+    },
+    paramsSnapshot: record.paramsSnapshot,
+    distanceCacheHitCount: record.distanceCacheHitCount,
+    distanceCacheMissCount: record.distanceCacheMissCount,
+    stops: record.stops.map((stop) => ({
+      routeStopId: stop.routeStopId,
+      id: stop.id,
+      label: normalizeLabel(stop.label),
+      lat: stop.lat,
+      lng: stop.lng,
+      sequence: stop.sequence,
+      distanceFromPreviousM: stop.distanceFromPreviousM,
+      durationFromPreviousS: stop.durationFromPreviousS,
+      cumulativeDistanceM: stop.cumulativeDistanceM,
+      cumulativeDurationS: stop.cumulativeDurationS,
+      rawInput: stop.rawInput,
+      createdAt: stop.createdAt
+    }))
+  });
 
 const needsFallback = (response: OptimizerResponse, options: OptimizerOptions): boolean => {
   if (response.diagnostics.fallbackUsed) {
@@ -230,9 +446,36 @@ const buildResult = (
 
 const handleRouteOptimization = async (
   deps: RouteOptimizationDependencies,
+  ctx: AppRouterContext,
   input: RouteOptimizeInput
 ): Promise<RouteOptimizeResult> => {
   const optimizerOptions = OptimizerOptionsSchema.parse(input.options ?? {});
+  const paramsDigest = computeRouteParamsDigest({
+    origin: input.origin,
+    destinations: input.destinations,
+    options: optimizerOptions
+  });
+  const paramsSnapshot = buildParamsSnapshot(input, optimizerOptions);
+  const stopLookup = buildStopLookup(input.origin, input.destinations);
+
+  const persistPlan = async (
+    plan: RoutePlanWithId,
+    diagnostics: RouteOptimizeResult['diagnostics'],
+    algorithm: RouteAlgorithm
+  ) => {
+    const payload = buildSavePayload({
+      userId: ctx.userId,
+      input,
+      plan,
+      optimizerOptions,
+      diagnostics,
+      paramsDigest,
+      paramsSnapshot,
+      stopLookup,
+      algorithm
+    });
+    await deps.routeRepository.saveRouteResult(payload);
+  };
 
   try {
     const response = await deps.optimizerClient.optimize({
@@ -243,31 +486,37 @@ const handleRouteOptimization = async (
 
     if (needsFallback(response, optimizerOptions)) {
       const plan = buildFallbackPlan(deps, input.origin, input.destinations);
-      return buildResult(plan, {
+      const result = buildResult(plan, {
         optimizer: response.diagnostics,
         fallbackUsed: true,
         fallbackReason: response.diagnostics.fallbackUsed
           ? 'optimizer_fallback_signaled'
           : 'optimizer_gap_exceeded'
       });
+      await persistPlan(plan, result.diagnostics, 'nearest_neighbor');
+      return result;
     }
 
     const plan = buildPlanFromOptimizer(response);
-    return buildResult(plan, {
+    const result = buildResult(plan, {
       optimizer: response.diagnostics,
       fallbackUsed: false,
       fallbackReason: null
     });
+    await persistPlan(plan, result.diagnostics, 'optimizer');
+    return result;
   } catch (error) {
     const plan = buildFallbackPlan(deps, input.origin, input.destinations);
     const optimizerError = isOptimizerError(error) ? error : null;
 
-    return buildResult(plan, {
+    const result = buildResult(plan, {
       optimizer: null,
       fallbackUsed: true,
       fallbackReason: 'optimizer_error',
       optimizerErrorCode: optimizerError?.code ?? null
     });
+    await persistPlan(plan, result.diagnostics, 'nearest_neighbor');
+    return result;
   }
 };
 
@@ -280,8 +529,28 @@ export const createAppRouter = (
     ping: t.procedure.query(() => 'pong'),
     echo: t.procedure.input(z.string()).mutation(({ input }) => input),
     route: t.router({
-      optimize: t.procedure.input(RouteOptimizeInputSchema).mutation(async ({ input }) => {
-        return handleRouteOptimization(deps, input);
+      optimize: authedProcedure.input(RouteOptimizeInputSchema).mutation(async ({ ctx, input }) => {
+        return handleRouteOptimization(deps, ctx, input);
+      }),
+      list: authedProcedure.input(RouteListInputSchema).query(async ({ ctx, input }) => {
+        const raw = await deps.routeRepository.listRoutes({
+          userId: ctx.userId,
+          limit: input.limit,
+          cursor: input.cursor ?? null
+        });
+
+        return RouteListResultSchema.parse({
+          routes: raw.routes.map(mapRouteSummary),
+          nextCursor: raw.nextCursor
+        });
+      }),
+      get: authedProcedure.input(RouteGetInputSchema).query(async ({ ctx, input }) => {
+        const detail = await deps.routeRepository.getRoute(ctx.userId, input.routeId);
+        if (!detail) {
+          return null;
+        }
+
+        return mapRouteDetail(detail);
       })
     })
   });

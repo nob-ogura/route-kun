@@ -36,6 +36,19 @@ export interface RoutePlan {
   totalDurationS: number;
 }
 
+export interface RouteOptimizationOptions {
+  strategy?: 'fast' | 'quality';
+  maxIterations?: number;
+  maxRuntimeSeconds?: number;
+  fallbackTolerance?: number;
+}
+
+export interface RouteParamsDigestInput {
+  origin: RouteStop;
+  destinations: RouteStop[];
+  options?: RouteOptimizationOptions | null;
+}
+
 type GeoJsonPointFeature = {
   type: 'Feature';
   geometry: {
@@ -205,4 +218,86 @@ export function createRouteGeoJson(plan: RoutePlan): RouteGeoJson {
     type: 'FeatureCollection',
     features: [...pointFeatures, lineFeature]
   };
+}
+
+const normalizeCoordinate = (value: number): number => Number(value.toFixed(6));
+
+const normalizeStopForDigest = (stop: RouteStop) => ({
+  id: stop.id,
+  label: stop.label ?? null,
+  lat: normalizeCoordinate(stop.lat),
+  lng: normalizeCoordinate(stop.lng)
+});
+
+const normalizeOptionsForDigest = (options?: RouteOptimizationOptions | null) => {
+  if (!options) {
+    return {};
+  }
+
+  const normalized: Record<string, string | number> = {};
+
+  if (options.strategy) {
+    normalized.strategy = options.strategy;
+  }
+
+  if (typeof options.maxIterations === 'number') {
+    normalized.maxIterations = Math.round(options.maxIterations);
+  }
+
+  if (typeof options.maxRuntimeSeconds === 'number') {
+    normalized.maxRuntimeSeconds = Math.round(options.maxRuntimeSeconds);
+  }
+
+  if (typeof options.fallbackTolerance === 'number') {
+    // Normalize to millesimal precision so tiny float noise does not change the digest.
+    normalized.fallbackTolerance = Number(options.fallbackTolerance.toFixed(3));
+  }
+
+  return normalized;
+};
+
+const FNV_OFFSET_BASIS = 0xcbf29ce484222325n;
+const FNV_PRIME = 0x100000001b3n;
+
+const fnv1a64 = (input: string): string => {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(input);
+  let hash = FNV_OFFSET_BASIS;
+
+  for (const byte of data) {
+    hash ^= BigInt(byte);
+    hash = (hash * FNV_PRIME) & 0xffffffffffffffffn;
+  }
+
+  return hash.toString(16).padStart(16, '0');
+};
+
+const stableStringify = (value: unknown): string => {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
+    a.localeCompare(b)
+  );
+
+  const serialized = entries
+    .map(([key, val]) => `${JSON.stringify(key)}:${stableStringify(val)}`)
+    .join(',');
+
+  return `{${serialized}}`;
+};
+
+export function computeRouteParamsDigest(payload: RouteParamsDigestInput): string {
+  const normalized = {
+    origin: normalizeStopForDigest(payload.origin),
+    destinations: payload.destinations.map((stop) => normalizeStopForDigest(stop)),
+    options: normalizeOptionsForDigest(payload.options)
+  };
+
+  return fnv1a64(stableStringify(normalized));
 }
