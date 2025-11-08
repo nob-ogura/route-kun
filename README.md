@@ -65,3 +65,33 @@ cp .env.example .env.local
 - `DATABASE_URL`（PostgreSQL 接続。Supabase から取得）
 - `OPTIMIZER_SERVICE_URL`（Python/OR-Tools サービスの URL）
 - `PLAYWRIGHT_TEST_BASE_URL`（E2E 用。デフォルト `http://localhost:3000`）
+
+### 4) 最小起動確認（Quick Start）
+
+以下で「開発サーバが起動する」「型チェック/テストが（空実装でも）成功する」ことを確認します。
+
+1. 依存関係のインストール
+
+```bash
+pnpm install
+# もしくは: pnpm run install:repo
+```
+
+2. apps/web の開発サーバ起動
+
+```bash
+# web パッケージのみ起動（推奨）
+pnpm -F web dev
+# ポート変更例: pnpm -F web dev -- -p 3001
+```
+
+ブラウザで `http://localhost:3000` を開き、トップが表示されれば OK です（停止は Ctrl + C）。
+
+3. 型チェック/テスト（空実装の成功確認）
+
+```bash
+pnpm typecheck
+pnpm test
+```
+
+Week 1 では各パッケージの `typecheck`/`test` はプレースホルダ実装になっており、成功（0 exit）する想定です。

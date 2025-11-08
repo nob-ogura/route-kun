@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "baseUrl": ".",
+    "paths": {
+      "@route-kun/config": ["packages/config/src"],
+      "@route-kun/domain": ["packages/domain/src"],
+      "@route-kun/api": ["packages/api/src"],
+      "@route-kun/supabase": ["packages/supabase/src"],
+      "@route-kun/ui": ["packages/ui/src"]
+    }
+  }
+}
+
