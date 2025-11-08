@@ -33,12 +33,10 @@
 
 ## 2) Optimizer クライアント契約確定（packages/optimizer-client）
 
-1. FastAPI サービスの OpenAPI/型定義を確認し、以下を Zod スキーマで記述。
-   - 入力: 出発地座標、目的地配列、距離/時間マトリクス、アルゴリズム設定（speed/quality）、フォールバック許容値。
-   - 出力: 訪問順序、総距離/時間、停止順リスト、診断情報（反復回数、gap、fallback フラグ）。
-2. HTTP クライアント（fetch/axios いずれか）に共通のタイムアウト（30s）、リトライ（指数バックオフ 3 回）、タイムアウト/4xx/5xx の分類エラーを実装。
-3. Zod に対する型テスト（vitest）を用意し、Optimzier からの実際のレスポンス例（サービス側 fixture）で decode できること、異常レスポンスで失敗することを確認。
-4. ドキュメント（docs/Design.md 追記 or packages/optimizer-client/README）に契約のフィールド説明と互換性担保方法（MSW/contract test）を記載。
+1. FastAPI サービスの OpenAPI/型定義を精査し、入力（出発地座標、目的地配列、距離/時間マトリクス、アルゴリズム設定 speed/quality、フォールバック許容値）と出力（訪問順序、総距離/時間、停止順リスト、診断情報: 反復回数/gap/fallback フラグ）の Zod スキーマ仕様を書き起こす。TDD の土台として、想定リクエスト/レスポンス fixture を `fixtures/optimizer-contract.ts` などに先に定義しておく。
+2. 1 の fixture を用いて Vitest で失敗する契約テストを先に作成する（実サービス由来 fixture で decode 成功、フィールド欠落/型不一致で decode 失敗を明示）。テストが赤のまま Zod スキーマを実装し、全ケースが緑になるまでリファインする。
+3. HTTP クライアント（fetch/axios いずれか）もテストから着手し、30s タイムアウト・指数バックオフ 3 回・タイムアウト/4xx/5xx の分類エラーを期待する振る舞いとして記述。テストを満たす形でクライアント実装とリトライ制御を整備し、型安全なリクエスト/レスポンスのパイプラインを完成させる。
+4. 完成した契約内容と TDD で担保した互換性の説明を docs/Design.md もしくは packages/optimizer-client/README に追記し、MSW/contract test の運用方法（どの fixture を真実源にするか等）を言語化する。
 
 ---
 
