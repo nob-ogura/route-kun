@@ -29,22 +29,22 @@ pyenv install -s 3.11 && pyenv local 3.11
 # Corepack を有効化
 corepack enable
 
-# 推奨: 安定の 9 系を明示して有効化
-corepack use pnpm@9 --activate || corepack prepare pnpm@9 --activate
+# 推奨: 安定の 10 系を明示して有効化
+corepack use pnpm@10 --activate || corepack prepare pnpm@10 --activate
 ```
 
 エラーで進めない場合（例: `Cannot find matching keyid` などの署名エラー）
 
 - Node を最新の 20.x に更新して再試行
   - `nvm install 20 && nvm use`
-  - その後: `corepack enable && corepack use pnpm@9 --activate`
+  - その後: `corepack enable && corepack use pnpm@10 --activate`
 - Corepack のキャッシュをクリアして再試行（環境によりいずれかが存在）
   - `rm -rf ~/.cache/node/corepack`
   - `rm -rf ~/.local/share/node/corepack`
   - `rm -rf ~/Library/Caches/node/corepack`
-  - その後: `corepack use pnpm@9 --activate`
+  - その後: `corepack use pnpm@10 --activate`
 - 一時回避: 既知のバージョンにピン留め
-  - 例: `corepack prepare pnpm@9.12.1 --activate`（ダメなら近い 9.12.x を試す）
+  - 例: `corepack prepare pnpm@10.20.0 --activate`（ダメなら近い 10.20.x を試す）
 - 最終手段: Corepack を使わず pnpm をグローバル導入
   - `npm i -g pnpm`（確認: `pnpm -v`）
 
@@ -95,3 +95,155 @@ pnpm test
 ```
 
 Week 1 では各パッケージの `typecheck`/`test` はプレースホルダ実装になっており、成功（0 exit）する想定です。
+
+### 5) 型生成パイプライン（DB 型の同期）
+
+`generate` は DB 型（Supabase）を同期するための共通コマンドです。Turbo の依存順は `generate → typecheck → test → build → e2e` となるよう調整済みです。
+
+```bash
+# 生成（各パッケージの generate を順に実行）
+pnpm generate
+
+# Supabase CLI が無い/DB URL 未設定の場合は、安定したスタブを出力します
+# 実 DB に接続できる場合は、以下で上書き生成されます（コミット推奨）
+# export SUPABASE_DB_URL=postgres://...  # もしくは DATABASE_URL
+# pnpm -F @route-kun/supabase generate
+```
+
+出力先:
+- `packages/supabase/src/types/database.types.ts`
+
+アプリ実行/型チェック時は、上記の型を Supabase クライアントに適用しています。
+
+### 6) 動作確認（型生成パイプライン）
+
+以下の手順で、本リポジトリに追加した「型生成パイプライン」が正しく動作しているかを確認できます。
+
+1. 生成の確認（スタブ or 実 DB）
+
+```bash
+# 生成を実行
+pnpm generate
+
+# 生成結果ファイルの存在確認
+ls -l packages/supabase/src/types/database.types.ts
+```
+
+実行ログに次のような出力があれば OK です。
+- スタブ出力時: `[supabase:types] supabase CLI not found; writing stub.` → `Types written to .../database.types.ts`
+- 実 DB 出力時: Supabase CLI の標準出力がファイルに反映されます
+
+2. パイプライン順序の確認（generate → typecheck → test → build → e2e）
+
+```bash
+pnpm build
+```
+
+Turbo のログに `@route-kun/supabase:generate` が `build` より先に実行されることを確認してください。
+（Week 1 では一部パッケージの generate が空実装のため、`WARNING no output files found for task web#generate` は無害です）
+
+3. 型適用の確認（TypeScript 型チェック）
+
+```bash
+pnpm typecheck
+```
+
+`packages/supabase/src/client.ts` は `createClient<Database>(...)` のジェネリクスを使用しています。型生成が欠落/不整合だとここで失敗します。成功すれば型の適用が機能しています。
+
+4. 実 DB からの型生成（オプション）
+
+Supabase CLI と DB URL を用意できる場合、実スキーマから型を生成して差分を確認できます。
+
+参考（公式ドキュメント）
+- Supabase CLI のインストール: https://supabase.com/docs/reference/cli/installation
+- PostgreSQL 接続文字列（DATABASE_URL）の取得: https://supabase.com/docs/guides/database/connecting-to-postgres#connection-strings
+
+Supabase UI での準備（プロジェクト作成とキー取得）
+
+- サインアップ/ログイン: https://supabase.com/ にアクセスし、アカウントを作成/ログイン。
+- 新規プロジェクト作成: Dashboard 右上の「New project」から以下を設定して作成。
+  - Organization: 任意（既存/新規）
+  - Project name: 任意（例: route-kun-dev）
+  - Database password: 強固なパスワードを設定（後で控える）
+  - Region/Compute: 近いリージョン、Free で可
+  - Provisioning 完了まで待機（1–2 分）
+- API キーの取得（ランタイム用: Data API）: Settings → API
+  - Project URL → `.env.local` の `SUPABASE_URL`
+  - anon public → `.env.local` の `SUPABASE_ANON_KEY`（クライアント用）
+  - service_role → `.env.local` の `SUPABASE_SERVICE_ROLE_KEY`（サーバ専用。クライアントに露出しない）
+- DB 接続文字列の取得（型生成/CLI 用）: Settings → Database → Connection string
+  - 「URI（直接接続）」の Postgres 文字列をコピーし、`.env.local` の `DATABASE_URL`（または `SUPABASE_DB_URL`）に設定
+  - 例: `postgres://USER:PASSWORD@HOST:5432/postgres`
+- 拡張機能（オプション: PostGIS）: Database → Extensions で「postgis」を Enable
+  - 本リポジトリは PostGIS を前提とした設計です（必要に応じて有効化）。
+- RLS/セキュリティ注意: RLS は既定で有効のままにし、クライアントでは必ず anon key を使用。service_role はサーバのみ。
+
+pnpm ワークスペースでの CLI 導入（推奨コマンド）
+
+```bash
+# Supabase CLI を @route-kun/supabase パッケージに追加（推奨）
+pnpm --filter @route-kun/supabase add -D supabase --allow-build=supabase
+
+# インストール確認（pnpm exec 経由でパッケージスコープのバイナリを実行）
+pnpm -F @route-kun/supabase exec supabase --version
+
+# 代替: リポジトリ全体に導入したい場合
+# pnpm -w add -D supabase --allow-build=supabase
+# 代替: 一時利用のみ
+# pnpm dlx supabase@latest --help
+```
+
+備考: pnpm で CLI 導入時に一時的な `ENOENT` 警告（bin の作成失敗）が出る場合がありますが、postinstall 後にバイナリが配置されるため問題ありません。
+
+ローカル Supabase の起動と .env 連携（推奨手順）
+
+```bash
+# 1) プロジェクト直下（packages/supabase/）に設定を初期化
+pnpm -F @route-kun/supabase exec supabase init
+
+# 2) ローカル Supabase（Docker）を起動
+pnpm -F @route-kun/supabase exec supabase start
+
+# 3) 現在の接続情報を .env 形式で出力
+pnpm -F @route-kun/supabase exec supabase status -o env
+```
+
+Docker が必要です（ポート 54321/54322 が競合していないことを確認）。
+
+型生成をローカル DB から実行する例
+
+```bash
+pnpm -F @route-kun/supabase generate
+```
+
+便利コマンド
+
+```bash
+# 停止
+pnpm -F @route-kun/supabase exec supabase stop
+
+# DB をリセット（全データ消去）
+pnpm -F @route-kun/supabase exec supabase db reset
+
+# ステータスを .env として確認
+pnpm -F @route-kun/supabase exec supabase status -o env
+```
+
+```bash
+export SUPABASE_DB_URL=postgres://USER:PASSWORD@HOST:PORT/DBNAME  # または DATABASE_URL を使用
+pnpm -F @route-kun/supabase generate
+
+# 差分の確認（変更があればコミット推奨）
+git --no-pager diff -- packages/supabase/src/types/database.types.ts
+```
+
+5. スタブへのフォールバック確認（オプション）
+
+DB URL を未設定、または Supabase CLI 未導入の状態で再度 `pnpm -F @route-kun/supabase generate` を実行し、スタブログが表示されることを確認します。
+
+---
+
+トラブルシュート
+- Supabase CLI が無い/DB URL 未設定 → スタブ出力が正です。実 DB 型が必要なときのみ CLI と URL を設定してください。
+- Turbo のログで generate が先に走らない → ルート `turbo.json` の `dependsOn` を確認してください（本リポジトリは調整済み）。
+- 生成物をコミットすべきか → Week 1 では再現性確保のためコミット推奨です。

@@ -12,10 +12,12 @@
     "lint": "echo 'ok'",
     "test": "echo 'ok'",
     "e2e": "echo 'ok'",
-    "generate": "echo 'ok'"
+    "generate": "node scripts/generate-types.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.47.10"
+  },
+  "devDependencies": {
+    "supabase": "^2.54.11"
   }
 }
-
