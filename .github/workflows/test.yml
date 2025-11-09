@@ -52,17 +52,6 @@ jobs:
   contract-tests:
     name: Contract Tests
     runs-on: ubuntu-latest
-    services:
-      optimizer:
-        image: route-kun/optimizer-py:latest
-        ports:
-          - 8000:8000
-        options: >-
-          --health-cmd "curl -f http://localhost:8000/health || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
       - uses: actions/checkout@v4
       
@@ -74,6 +63,23 @@ jobs:
         with:
           node-version: '20'
           cache: 'pnpm'
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: |
+          cd services/optimizer-py
+          pip install -e .
+
+      - name: Start optimizer service
+        run: |
+          cd services/optimizer-py
+          uvicorn optimizer_service.main:app --host 0.0.0.0 --port 8000 &
+          sleep 5
+          curl -f http://localhost:8000/health || exit 1
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

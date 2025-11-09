@@ -209,7 +209,7 @@ export default function Page() {
           <DiagnosticsRow
             diagnostics={diagnostics}
             fallbackUsed={Boolean(result?.diagnostics.fallbackUsed)}
-            fallbackStrategy={result?.diagnostics.fallbackStrategy}
+            fallbackStrategy={result?.diagnostics.fallbackStrategy ?? null}
             optimizerErrorCode={result?.diagnostics.optimizerErrorCode ?? null}
           />
 
