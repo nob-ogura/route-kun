@@ -66,6 +66,61 @@ cp .env.example .env.local
 - `OPTIMIZER_SERVICE_URL`（Python/OR-Tools サービスの URL）
 - `PLAYWRIGHT_TEST_BASE_URL`（E2E 用。デフォルト `http://localhost:3000`）
 
+### Week 3 事前準備: 環境変数の取得手順
+
+以下の手順で必要な値を取得し、`.env.local` に設定してください。
+
+- **NEXT_PUBLIC_MAPBOX_TOKEN（必須）**
+  - [Mapbox アカウントダッシュボード](https://account.mapbox.com/) にサインアップ/ログイン
+  - 左メニュー「Tokens」→「Create a token」で公開トークンを作成
+    - 開発中は Allowed URLs に `http://localhost:3000` を追加（本番は自身のドメインを追加）
+  - `.env.local` に設定
+    ```bash
+    NEXT_PUBLIC_MAPBOX_TOKEN=<your_public_mapbox_token>
+    ```
+
+- **GOOGLE_MAPS_API_KEY（必須 / サーバー専用）**
+  - [Google Cloud Console](https://console.cloud.google.com/) でプロジェクトを作成/選択
+  - 「API とサービス」→「ライブラリ」で次の API を有効化
+    - Distance Matrix API
+    - Geocoding API
+  - 「API とサービス」→「認証情報」→「認証情報を作成」→「API キー」
+  - 「キーを制限」から制限を推奨
+    - API 制限: 上記 2 つの API に限定
+    - アプリケーション制限: 本番はサーバーの IP に制限（開発中は未設定でも可）
+  - `.env.local` に設定
+    ```bash
+    GOOGLE_MAPS_API_KEY=<your_server_side_google_maps_api_key>
+    ```
+
+- **OPTIMIZER_SERVICE_URL（必須）**
+  - ローカルの Optimizer スタブを起動（詳細は本ファイルの「7) Week 2 事前準備: Optimizer サービススタブ」参照）
+    - 例: `uvicorn optimizer_service.main:app --reload --port 8001`
+  - `.env.local` に設定
+    ```bash
+    OPTIMIZER_SERVICE_URL=http://localhost:8001
+    ```
+
+- **SUPABASE_URL / SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY（任意: 有効時）**
+  - [Supabase ダッシュボード](https://supabase.com/) でプロジェクト作成
+  - 「Settings」→「API」から取得
+    - Project URL → `SUPABASE_URL`
+    - anon public → `SUPABASE_ANON_KEY`（クライアント用）
+    - service_role → `SUPABASE_SERVICE_ROLE_KEY`（サーバ専用。クライアントに露出しない）
+  - `.env.local` に必要なキーのみ設定（RLS 前提・用途に合わせて選択）
+    ```bash
+    SUPABASE_URL=<your_supabase_project_url>
+    SUPABASE_ANON_KEY=<your_anon_key>
+    # サーバ専用（UI には渡さない）
+    SUPABASE_SERVICE_ROLE_KEY=<your_service_role_key>
+    ```
+
+- **PLAYWRIGHT_TEST_BASE_URL（E2E 用）**
+  - Next.js 開発サーバの URL を設定（デフォルトは 3000）
+    ```bash
+    PLAYWRIGHT_TEST_BASE_URL=http://localhost:3000
+    ```
+
 ### 4) 最小起動確認（Quick Start）
 
 以下で「開発サーバが起動する」「型チェック/テストが（空実装でも）成功する」ことを確認します。
