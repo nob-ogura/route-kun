@@ -281,6 +281,12 @@ erDiagram
 - Week 2: Optimizer クライアント契約確定、MSW モック、最適化フロー（tRPC）実装、結果保存、基本 UI/地図描画。
 - Week 3: 観測性・レート制限・RLS 仕上げ、a11y/E2E 安定化、キャッシュ・フォールバック導入、パフォーマンス計測。**TypeScript プロジェクト参照（`composite: true`）と `tsc --build` の導入を検討開始**。
 - Week 4: 仕上げ（UX 改善・モバイル最適化）、ドキュメント整備、デプロイ、運用監視基盤。**本番ビルドパイプラインで `tsc --build` を統合し、モノレポ全体のインクリメンタルビルドを確立**。
+- Notes:
+  - `NEXT_PUBLIC_MAPBOX_TOKEN` を設定しないと Mapbox が描画されず画面が真っ白なままになる。
+  - 現状の UI は決定論的なデモシナリオ（`selectDemoScenario`）で動いている。`route.optimize` / ジオコーディングが接続できたら実際の呼び出しへ置き換える。
+  - 入力テキストエリアに「fallback」を含めるとフォールバック UI（オレンジのバッジと地図の配色）を強制的に再現できる。
+  - Optimizer / ジオコーディング API が結線でき次第、apps/web のデモシナリオ（`selectDemoScenario`）を本番の `route.optimize` 呼び出しと実データに差し替える。
+  - E2E フローが整い次第、ステータスパネルと停留所リストの新 UI を Playwright などでテストカバーし、成功・フォールバック両方のケースを検証する。
 
 ---
 

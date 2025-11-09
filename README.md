@@ -327,3 +327,4 @@ curl -s -X POST http://localhost:8001/optimize \
 
    > `ctx.userId` が無いと Supabase の `routes` / `route_stops` RLS が即座に拒否するため、API は保存も履歴参照もできません。UI/テスト/スクリプトのいずれでも、`route.*` を叩く前に認証済みユーザー ID をセットしてください。
 3. 依存関係をインストールしたら `pnpm --filter @route-kun/domain test` と `pnpm --filter @route-kun/api test` を実行し、結果保存・履歴 API を含むドメイン/サーバ層のテストを再確認してください。
+
