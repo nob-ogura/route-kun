@@ -16,22 +16,29 @@ export default defineConfig({
     screenshot: 'only-on-failure'
   },
 
-  projects: [
-    {
-      name: 'chromium',
-      use: { ...devices['Desktop Chrome'] }
-    },
+  projects: process.env.CI
+    ? [
+        {
+          name: 'chromium',
+          use: { ...devices['Desktop Chrome'] }
+        }
+      ]
+    : [
+        {
+          name: 'chromium',
+          use: { ...devices['Desktop Chrome'] }
+        },
 
-    {
-      name: 'firefox',
-      use: { ...devices['Desktop Firefox'] }
-    },
+        {
+          name: 'firefox',
+          use: { ...devices['Desktop Firefox'] }
+        },
 
-    {
-      name: 'webkit',
-      use: { ...devices['Desktop Safari'] }
-    }
-  ],
+        {
+          name: 'webkit',
+          use: { ...devices['Desktop Safari'] }
+        }
+      ],
 
   webServer: {
     command: process.env.CI ? 'pnpm build && pnpm start' : 'pnpm dev',
