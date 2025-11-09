@@ -270,7 +270,7 @@ export function RouteMap({ geoJson, isFallback, onSelectStop, selectedStopId }: 
     };
   }, []);
 
-  return <div ref={containerRef} className="route-map" role="img" aria-label="最適化ルートの地図" />;
+  return <div ref={containerRef} className="route-map" role="img" aria-label="最適化ルートの地図" data-testid="map-container" />;
 }
 
 const fitRoute = (

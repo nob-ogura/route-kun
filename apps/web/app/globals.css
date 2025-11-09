@@ -301,7 +301,7 @@
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #94a3b8;
+  color: #64748b;
 }
 
 .diagnostics-row dd {
@@ -321,7 +321,7 @@
   gap: 12px;
 }
 
-.stop-list-header h3 {
+.stop-list-header h2 {
   margin: 0;
 }
 
@@ -397,7 +397,7 @@
   color: #475569;
 }
 
-.empty-state h3 {
+.empty-state h2 {
   margin: 0 0 8px;
 }
 
@@ -427,7 +427,7 @@
   background: #f8fafc;
 }
 
-.map-placeholder h3 {
+.map-placeholder h2 {
   margin: 0 0 8px;
 }
 

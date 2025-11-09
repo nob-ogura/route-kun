@@ -3,10 +3,15 @@ node_modules/
 .next/
 dist/
 .turbo/
+.swc/
 
 # Python
 .venv/
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
 
 # Env files
 .env
@@ -19,11 +24,27 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 coverage/
+*.log
 
 # OS/Editor
 .DS_Store
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
+
+# Testing
+test-results/
+playwright-report/
+playwright/.cache/
+
+# TypeScript
+*.tsbuildinfo
+
+# Build / Deploy
+.vercel/
+.output/
 
 # Generated artifacts
 apps/web/src/__generated__/

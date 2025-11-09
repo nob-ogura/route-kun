@@ -185,7 +185,7 @@ export default function Page() {
       </header>
 
       <section className="results-grid" aria-live="polite">
-        <div className="panel">
+        <div className="panel" data-testid={result ? 'route-result' : undefined}>
           <StatusCard
             status={status}
             fallbackMessage={fallbackMessage}
@@ -276,7 +276,9 @@ const StatusCard = ({ status, hasFallback, fallbackMessage, statusError }: Statu
         <span className={toneClass}>{copy.label}</span>
         {hasFallback ? <span className="status-chip status-fallback">フォールバック</span> : null}
       </div>
-      <p className="status-description">{fallbackMessage ?? copy.description}</p>
+      <p className="status-description" data-testid={fallbackMessage ? 'fallback-notice' : undefined}>
+        {fallbackMessage ?? copy.description}
+      </p>
       {status === 'running' ? <div className="status-progress" aria-hidden="true" /> : null}
       {status === 'error' && statusError ? (
         <p role="alert" className="status-error-message">
@@ -344,7 +346,9 @@ const DiagnosticsRow = ({
       {items.map((item) => (
         <div key={item.label}>
           <dt>{item.label}</dt>
-          <dd>{item.value}</dd>
+          <dd data-testid={item.label === 'ソルバー' && fallbackUsed ? 'algorithm-badge' : undefined}>
+            {item.value}
+          </dd>
         </div>
       ))}
     </dl>
@@ -391,7 +395,7 @@ const StopList = ({ stops, selectedStopId, onSelectStop }: StopListProps) => {
   return (
     <div className="stop-list">
       <div className="stop-list-header">
-        <h3>訪問順序</h3>
+        <h2>訪問順序</h2>
         <p>↑↓キーでピンを移動できます</p>
       </div>
       <ol>
@@ -439,7 +443,7 @@ const StopList = ({ stops, selectedStopId, onSelectStop }: StopListProps) => {
 
 const EmptyState = ({ title, message }: { title: string; message: string }) => (
   <div className="empty-state">
-    <h3>{title}</h3>
+    <h2>{title}</h2>
     <p>{message}</p>
   </div>
 );
@@ -447,7 +451,7 @@ const EmptyState = ({ title, message }: { title: string; message: string }) => (
 const MapPlaceholder = ({ status }: { status: OptimizationStatus }) => (
   <div className="map-placeholder">
     <div>
-      <h3>{status === 'running' ? '地図を準備中' : '地図プレビュー'}</h3>
+      <h2>{status === 'running' ? '地図を準備中' : '地図プレビュー'}</h2>
       <p>
         {status === 'running'
           ? '最適化が完了するとルート線とピン番号を描画します。'
