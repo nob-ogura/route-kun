@@ -12,6 +12,72 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      distance_cache: {
+        Row: {
+          key: string;
+          origin_lat: number;
+          origin_lng: number;
+          destination_lat: number;
+          destination_lng: number;
+          mode: string;
+          time_bucket: string;
+          distance_m: number;
+          duration_s: number;
+          provider: string;
+          status: string;
+          requested_at: string;
+          expires_at: string;
+          request_fingerprint: string;
+          metadata: Json;
+          hit_count: number;
+          last_hit_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          key: string;
+          origin_lat: number;
+          origin_lng: number;
+          destination_lat: number;
+          destination_lng: number;
+          mode: string;
+          time_bucket: string;
+          distance_m: number;
+          duration_s: number;
+          provider?: string;
+          status?: string;
+          requested_at?: string;
+          expires_at: string;
+          request_fingerprint: string;
+          metadata?: Json;
+          hit_count?: number;
+          last_hit_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          key?: string;
+          origin_lat?: number;
+          origin_lng?: number;
+          destination_lat?: number;
+          destination_lng?: number;
+          mode?: string;
+          time_bucket?: string;
+          distance_m?: number;
+          duration_s?: number;
+          provider?: string;
+          status?: string;
+          requested_at?: string;
+          expires_at?: string;
+          request_fingerprint?: string;
+          metadata?: Json;
+          hit_count?: number;
+          last_hit_at?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
       routes: {
         Row: {
           id: string;
@@ -135,7 +201,14 @@ export type Database = {
       };
     };
     Views: Record<string, never>;
-    Functions: Record<string, never>;
+    Functions: {
+      increment_distance_cache_hit: {
+        Args: {
+          cache_key: string;
+        };
+        Returns: undefined;
+      };
+    };
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
   };

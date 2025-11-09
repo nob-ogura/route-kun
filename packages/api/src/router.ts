@@ -33,19 +33,57 @@ import {
   type RouteRepositoryDetail
 } from './route-repository';
 
+import {
+  createCorrelationContext,
+  generateCorrelationId,
+  logRequestStart,
+  logRequestEnd,
+  type CorrelationContext
+} from './middleware/correlation';
+
 type AppRouterContext = {
   userId: string;
+  correlationId?: string;
 };
 
 const t = initTRPC.context<AppRouterContext>().create();
 
-const authedProcedure = t.procedure.use(({ ctx, next }) => {
-  if (!ctx.userId) {
-    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'User context is required' });
-  }
+const correlationMiddleware = t.middleware(async ({ ctx, path, type, next }) => {
+  const correlationId = ctx.correlationId ?? generateCorrelationId();
+  const correlationCtx = createCorrelationContext(correlationId);
 
-  return next({ ctx });
+  logRequestStart(`${type}.${path}`, correlationId);
+
+  try {
+    const result = await next({
+      ctx: {
+        ...ctx,
+        ...correlationCtx
+      }
+    });
+
+    logRequestEnd(`${type}.${path}`, correlationId, correlationCtx.startTime);
+    return result;
+  } catch (error) {
+    const trpcError = error instanceof TRPCError ? error : new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+
+    logRequestEnd(`${type}.${path}`, correlationId, correlationCtx.startTime, trpcError);
+    throw trpcError;
+  }
 });
+
+const authedProcedure = t.procedure
+  .use(correlationMiddleware)
+  .use(({ ctx, next }) => {
+    if (!ctx.userId) {
+      throw new TRPCError({ code: 'UNAUTHORIZED', message: 'User context is required' });
+    }
+
+    return next({ ctx });
+  });
 
 type RoutePlanWithId = DomainRoutePlan & { routeId: string };
 
@@ -204,6 +242,14 @@ type RouteOptimizationDependencies = {
   fallbackPlanner: typeof computeNearestNeighborPlan;
   routeIdGenerator: () => string;
   routeRepository: RouteRepository;
+  logger?: RouteLogger;
+};
+
+type RouteLogger = {
+  logOptimizerCall: (correlationId: string, payload: unknown) => void;
+  logOptimizerSuccess: (correlationId: string, response: OptimizerResponse) => void;
+  logOptimizerError: (correlationId: string, error: unknown) => void;
+  logFallback: (correlationId: string, reason: string) => void;
 };
 
 const createRouteRepository = (env: ReturnType<typeof loadEnv>): RouteRepository => {
@@ -228,6 +274,34 @@ const createRouteRepository = (env: ReturnType<typeof loadEnv>): RouteRepository
   return createInMemoryRouteRepository();
 };
 
+const createDefaultLogger = (): RouteLogger => ({
+  logOptimizerCall: (correlationId, payload) => {
+    console.log(`[${correlationId}] Calling optimizer service`, { payload });
+  },
+  logOptimizerSuccess: (correlationId, response) => {
+    console.log(`[${correlationId}] Optimizer success`, {
+      routeId: response.routeId,
+      gap: response.diagnostics.gap,
+      executionMs: response.diagnostics.executionMs
+    });
+  },
+  logOptimizerError: (correlationId, error) => {
+    if (error instanceof OptimizerClientError) {
+      console.error(`[${correlationId}] Optimizer error [${error.code}]`, {
+        message: error.message,
+        code: error.code,
+        status: error.status,
+        details: error.details
+      });
+    } else {
+      console.error(`[${correlationId}] Optimizer error`, { error });
+    }
+  },
+  logFallback: (correlationId, reason) => {
+    console.warn(`[${correlationId}] Using fallback algorithm: ${reason}`);
+  }
+});
+
 const createDefaultDependencies = (): RouteOptimizationDependencies => {
   const env = loadEnv();
 
@@ -242,7 +316,8 @@ const createDefaultDependencies = (): RouteOptimizationDependencies => {
       }
       return `route_${Math.random().toString(36).slice(2)}`;
     },
-    routeRepository: createRouteRepository(env)
+    routeRepository: createRouteRepository(env),
+    logger: createDefaultLogger()
   };
 };
 
@@ -446,9 +521,12 @@ const buildResult = (
 
 const handleRouteOptimization = async (
   deps: RouteOptimizationDependencies,
-  ctx: AppRouterContext,
+  ctx: AppRouterContext & CorrelationContext,
   input: RouteOptimizeInput
 ): Promise<RouteOptimizeResult> => {
+  const correlationId = ctx.correlationId;
+  const logger = deps.logger ?? createDefaultLogger();
+
   const optimizerOptions = OptimizerOptionsSchema.parse(input.options ?? {});
   const paramsDigest = computeRouteParamsDigest({
     origin: input.origin,
@@ -478,20 +556,29 @@ const handleRouteOptimization = async (
   };
 
   try {
-    const response = await deps.optimizerClient.optimize({
+    const requestPayload = {
       origin: { lat: input.origin.lat, lng: input.origin.lng },
       destinations: input.destinations.map(toDestination),
       options: optimizerOptions
-    });
+    };
+
+    logger.logOptimizerCall(correlationId, requestPayload);
+
+    const response = await deps.optimizerClient.optimize(requestPayload);
+
+    logger.logOptimizerSuccess(correlationId, response);
 
     if (needsFallback(response, optimizerOptions)) {
+      const reason = response.diagnostics.fallbackUsed
+        ? 'optimizer_fallback_signaled'
+        : 'optimizer_gap_exceeded';
+      logger.logFallback(correlationId, reason);
+
       const plan = buildFallbackPlan(deps, input.origin, input.destinations);
       const result = buildResult(plan, {
         optimizer: response.diagnostics,
         fallbackUsed: true,
-        fallbackReason: response.diagnostics.fallbackUsed
-          ? 'optimizer_fallback_signaled'
-          : 'optimizer_gap_exceeded'
+        fallbackReason: reason
       });
       await persistPlan(plan, result.diagnostics, 'nearest_neighbor');
       return result;
@@ -506,6 +593,9 @@ const handleRouteOptimization = async (
     await persistPlan(plan, result.diagnostics, 'optimizer');
     return result;
   } catch (error) {
+    logger.logOptimizerError(correlationId, error);
+    logger.logFallback(correlationId, 'optimizer_error');
+
     const plan = buildFallbackPlan(deps, input.origin, input.destinations);
     const optimizerError = isOptimizerError(error) ? error : null;
 

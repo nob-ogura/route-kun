@@ -51,3 +51,35 @@ export const googleRateLimitErrorFixture = {
   error_message: 'You have exceeded your daily request quota for this API.',
   status: 'OVER_QUERY_LIMIT'
 } as const;
+
+export const singleDistanceMatrixFixture = {
+  destination_addresses: ['Destination Address'],
+  origin_addresses: ['Origin Address'],
+  rows: [
+    {
+      elements: [
+        {
+          status: 'OK',
+          distance: { text: '5.0 km', value: 5000 },
+          duration: { text: '10 mins', value: 600 }
+        }
+      ]
+    }
+  ],
+  status: 'OK'
+} as const;
+
+export const distanceMatrixNotFoundFixture = {
+  destination_addresses: ['Unknown Address'],
+  origin_addresses: ['Unknown Address'],
+  rows: [
+    {
+      elements: [
+        {
+          status: 'NOT_FOUND'
+        }
+      ]
+    }
+  ],
+  status: 'OK'
+} as const;
