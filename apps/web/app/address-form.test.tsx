@@ -1,7 +1,15 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
+import { routeOptimizeMutationController } from '../src/test-utils/mock-trpc';
+
+vi.mock('../src/lib/trpc', async () => await import('../src/test-utils/mock-trpc'));
+
 import Page from './page';
+
+afterEach(() => {
+  routeOptimizeMutationController.reset();
+});
 
 const copy = {
   emptyInput: '住所を入力してください',
@@ -52,4 +60,3 @@ describe('住所入力フォーム', () => {
     expect(screen.queryByText(copy.insufficientUniqueAddresses)).not.toBeInTheDocument();
   });
 });
-

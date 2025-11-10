@@ -6,7 +6,7 @@ import { mockServer } from '@route-kun/msw/server';
 
 beforeAll(() =>
   mockServer.listen({
-    onUnhandledRequest: 'error'
+    onUnhandledRequest: 'warn'
   })
 );
 

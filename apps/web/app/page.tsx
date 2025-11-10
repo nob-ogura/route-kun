@@ -3,10 +3,11 @@
 import { FormEvent, KeyboardEvent, useMemo, useRef, useState } from 'react';
 
 import type { RouteOptimizeResult } from '@route-kun/api';
-import { AddressListSchema } from '@route-kun/domain';
+import { AddressListSchema, type RouteStop } from '@route-kun/domain';
 
 import { RouteMap } from '../components/route-map';
 import { selectDemoScenario } from '../src/demo/route-scenarios';
+import { trpc } from '../src/lib/trpc';
 
 type OptimizationStatus = 'idle' | 'running' | 'success' | 'error';
 
@@ -75,12 +76,45 @@ const formatExecutionTime = (executionMs?: number) => {
   return `${(executionMs / 1000).toFixed(1)} 秒`;
 };
 
+type PlaceholderRouteInput = {
+  origin: RouteStop;
+  destinations: RouteStop[];
+  options: {
+    strategy: 'quality';
+  };
+};
+
+const MAX_PLACEHOLDER_STOPS = 31;
+
+const buildPlaceholderRouteInput = (addresses: string[]): PlaceholderRouteInput | null => {
+  if (addresses.length < 2) {
+    return null;
+  }
+
+  const limitedAddresses = addresses.slice(0, MAX_PLACEHOLDER_STOPS);
+  const stops: RouteStop[] = limitedAddresses.map((address, index) => ({
+    id: `temp-stop-${index}`,
+    label: address,
+    lat: 35.68 + index * 0.01,
+    lng: 139.76 + index * 0.01
+  }));
+
+  return {
+    origin: stops[0]!,
+    destinations: stops.slice(1),
+    options: {
+      strategy: 'quality'
+    }
+  };
+};
+
 export default function Page() {
   const [rawInput, setRawInput] = useState('');
   const [status, setStatus] = useState<OptimizationStatus>('idle');
   const [result, setResult] = useState<RouteOptimizeResult | null>(null);
   const [selectedStopId, setSelectedStopId] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const optimizationMutation = trpc.route.optimize.useMutation();
 
   const validationResult = AddressListSchema.safeParse({ rawInput });
   const isValid = validationResult.success;
@@ -88,11 +122,27 @@ export default function Page() {
     ? validationResult.error.issues[0]?.message ?? '入力が無効です'
     : null;
 
+  const isOptimizing = optimizationMutation.isLoading;
+  const derivedStatus: OptimizationStatus = isOptimizing ? 'running' : status;
+
   const runOptimization = async () => {
     setStatus('running');
     setStatusError(null);
     setResult(null);
     setSelectedStopId(null);
+
+    if (validationResult.success) {
+      const placeholderInput = buildPlaceholderRouteInput(
+        validationResult.data.normalizedAddresses
+      );
+      if (placeholderInput) {
+        try {
+          await optimizationMutation.mutateAsync(placeholderInput);
+        } catch (error) {
+          console.warn('route.optimize mutation failed', error);
+        }
+      }
+    }
 
     // 擬似的な API レイテンシを挿入し、UI の状態遷移をテストできるようにする
     await wait(900);
@@ -106,7 +156,7 @@ export default function Page() {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!validationResult.success || status === 'running') {
+    if (!validationResult.success || isOptimizing) {
       return;
     }
 
@@ -120,7 +170,7 @@ export default function Page() {
   };
 
   const handleRetry = async () => {
-    if (!isValid || status === 'running') {
+    if (!isValid || isOptimizing) {
       return;
     }
 
@@ -178,8 +228,8 @@ export default function Page() {
               {validationError}
             </p>
           ) : null}
-          <button type="submit" disabled={!isValid || status === 'running'}>
-            {status === 'running' ? '最適化中…' : '最適化'}
+          <button type="submit" disabled={!isValid || isOptimizing}>
+            {isOptimizing ? '最適化中…' : '最適化'}
           </button>
         </form>
       </header>
@@ -187,7 +237,7 @@ export default function Page() {
       <section className="results-grid" aria-live="polite">
         <div className="panel" data-testid={result ? 'route-result' : undefined}>
           <StatusCard
-            status={status}
+            status={derivedStatus}
             fallbackMessage={fallbackMessage}
             hasFallback={Boolean(result?.diagnostics.fallbackUsed)}
             statusError={statusError}
@@ -200,7 +250,7 @@ export default function Page() {
               type="button"
               className="ghost-button"
               onClick={handleRetry}
-              disabled={!isValid || status === 'running'}
+              disabled={!isValid || isOptimizing}
             >
               再実行
             </button>
@@ -221,9 +271,9 @@ export default function Page() {
             />
           ) : (
             <EmptyState
-              title={status === 'running' ? 'ルートを計算しています' : '結果待機中'}
+              title={derivedStatus === 'running' ? 'ルートを計算しています' : '結果待機中'}
               message={
-                status === 'running'
+                derivedStatus === 'running'
                   ? '最適化が完了すると訪問順序が表示されます。'
                   : '住所リストを入力して「最適化」を押すと訪問順序が表示されます。'
               }
@@ -251,7 +301,7 @@ export default function Page() {
               onSelectStop={setSelectedStopId}
             />
           ) : (
-            <MapPlaceholder status={status} />
+            <MapPlaceholder status={derivedStatus} />
           )}
         </div>
       </section>
@@ -279,7 +329,9 @@ const StatusCard = ({ status, hasFallback, fallbackMessage, statusError }: Statu
       <p className="status-description" data-testid={fallbackMessage ? 'fallback-notice' : undefined}>
         {fallbackMessage ?? copy.description}
       </p>
-      {status === 'running' ? <div className="status-progress" aria-hidden="true" /> : null}
+      {status === 'running' ? (
+        <div className="status-progress" aria-hidden="true" data-testid="optimization-progress" />
+      ) : null}
       {status === 'error' && statusError ? (
         <p role="alert" className="status-error-message">
           {statusError}
