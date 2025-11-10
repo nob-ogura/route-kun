@@ -157,13 +157,13 @@ jobs:
       - name: Install Playwright Browsers
         run: cd apps/web && pnpm exec playwright install --with-deps chromium
 
-      - name: Build app
-        run: pnpm --filter web build
-
       - name: Run Playwright tests
         run: pnpm --filter web e2e
         env:
           CI: true
+          NEXT_PUBLIC_MAPBOX_TOKEN: pk.test-ci-token
+          GOOGLE_MAPS_API_KEY: test-google-api-key
+          OPTIMIZER_SERVICE_URL: http://localhost:8000
 
       - uses: actions/upload-artifact@v4
         if: always()
