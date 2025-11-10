@@ -1,10 +1,10 @@
 ### UI 層からデモダミーを排除し実 API に接続
 
 #### 実装方針
-- まず Testing Library + MSW で「最適化が成功/失敗した際の UI 状態遷移」を Red にする（`最適化中` 表示・結果描画・エラーアラートなど）。
-- そのテストを Green にする形で `selectDemoScenario` を呼び出している `runOptimization` を廃止し、tRPC ミューテーション Hook（React Query or `@trpc/next`）で `route.optimize` を叩く（外部 Optimizer/Geocode は MSW でスタブし、tRPC は本物を通す）。
-- 状態管理（`status`, `result`, `statusError`）はミューテーションの `status/data/error` に委譲し、実レスポンスを既存 UI コンポーネントへ流す。
-- 「fallback」キーワードで UI を強制分岐させていた説明文を Storybook/デモ専用に退避し、本番 UI では実レスポンスのみ表示する。
+- Testing Library + MSW で機能単位のテストを Red → Green の小サイクルで回す（外部 Optimizer/Geocode は MSW でスタブし、tRPC は本物を通す）。
+- 各サイクルで「最適化実行中」「成功」「失敗」「フォールバック」「Retry」の状態遷移を1つずつ実装。
+- 状態管理は React Query / tRPC mutation の状態に委譲し、ローカル state を段階的に削除。
+- デモシナリオ（`selectDemoScenario`）は全サイクル完了後に削除。
 
 ### 事前調査結果
 - トップページはクライアントコンポーネントで、`selectDemoScenario` を呼ぶ `runOptimization` がダミールートを返しているため、実際の HTTP 呼び出しは発生していない（apps/web/app/page.tsx:1,9,91）。
@@ -15,190 +15,307 @@
 
 #### 実行手順
 
-##### 1. Testing Library + MSW でテストを Red にする
+##### 0. MSW セットアップ（全サイクル共通の準備）
 
-`apps/web/app/page.test.tsx` に以下のテストケースを追加（MSW で外部 Optimizer/Geocode をスタブし、tRPC は通す）：
+`apps/web/vitest.setup.ts` で MSW サーバーを起動し、外部 HTTP（Optimizer/Geocode）をスタブする。
 
-- **最適化実行中の状態表示**
-  - ボタンが「最適化中…」になり、disabled 状態になる
-  - ステータスカードに「実行中」が表示される
-  - プログレスバーが表示される
-- **成功時の結果描画**
-  - `RouteMap` コンポーネントに GeoJSON が渡される（`data-testid="map-container"` の存在を確認）
-  - 訪問順序リストが表示される（`screen.getByRole('list')` など）
-  - 合計距離/時間が表示される
-- **失敗時のエラー表示**
-  - エラーアラート（`role="alert"`）が表示される
-  - 再実行ボタンが有効になる
-- **フォールバック時の UI 分岐**
-  - `diagnostics.fallbackUsed` が true の場合に `data-testid="fallback-notice"` が表示される
+**セットアップ内容**:
+- `@route-kun/msw` の `mockServer` を `beforeAll` で起動
+- `afterEach` でハンドラをリセット
+- `afterAll` でサーバーをクローズ
+- 未処理リクエストは警告表示（`onUnhandledRequest: 'warn'`）
 
-**MSW セットアップ**: `apps/web/vitest.setup.ts` で `@route-kun/msw` の `mockServer` を起動する（Optimizer/Geocode の外部依存のみスタブ）。初期はデフォルトハンドラ（成功ケース）で十分。必要に応じて `optimizerTimeoutHandler` などへ差し替える。
+**注記**: tRPC 自体をテストでスタブしたい場合は、tRPC 用の MSW ハンドラ（または fetch モック）を別途用意する必要があります。本手順では tRPC は実ルーターを通し、外部 HTTP のみ MSW で置換します。
 
-```ts
-// apps/web/vitest.setup.ts
-import '@testing-library/jest-dom/vitest';
-import { mockServer } from '@route-kun/msw';
-
-beforeAll(() => mockServer.listen({ onUnhandledRequest: 'warn' }));
-afterEach(() => mockServer.resetHandlers());
-afterAll(() => mockServer.close());
+**確認コマンド**:
+```bash
+pnpm --filter web test
 ```
 
-> 注記: tRPC 自体をテストでスタブしたい場合は、tRPC 用の MSW ハンドラ（または fetch モック）を別途用意する必要があります。本手順では tRPC は実ルーターを通し、外部 HTTP のみ MSW で置換します。
+---
 
-##### 2. ダミー依存を削除し tRPC ミューテーションの基礎を作る
+##### サイクル1: 最適化実行中の状態表示 (Red → Green)
 
-`apps/web/app/page.tsx` から以下を削除/変更：
+###### 1-1. Red: テストを追加
 
-- `selectDemoScenario` の import と呼び出しを削除
-- `wait(900)` の擬似レイテンシを削除
-- `runOptimization` 関数を一旦空の状態に（後続手順で実装）
+`apps/web/app/page.test.tsx` に**実行中状態のテストのみ**を追加：
 
-これで新設したテストが要求する HTTP 経路を開通させる土台を作る。
+**テストケース**:
+- 最適化実行開始後、ボタンが「最適化中…」に変わり disabled になること
+- ステータスカードに「実行中」が表示されること
+- プログレスバーまたはスピナーが表示されること
 
-##### 3. tRPC ミューテーションを初期化し、Geocode 連携を実装
+**検証方法**:
+- フォームに有効な住所を入力してボタンをクリック
+- ボタンのテキストと disabled 属性を確認
+- `screen.getByText('実行中')` などでステータス表示を確認
+- loading indicator の存在を確認
 
-`page.tsx` 内で以下を実装：
-
-```typescript
-// tRPC フックの初期化
-const optimizeMutation = trpc.route.optimize.useMutation();
-
-// runOptimization の再実装
-const runOptimization = async () => {
-  // (a) UI の rawInput から AddressListSchema を検証
-  const validation = AddressListSchema.safeParse({ rawInput });
-  if (!validation.success) {
-    throw new Error('バリデーションエラー');
-  }
-
-  // (b) Server Action で住所 → 座標変換（Geocode）
-  const convertedStops = await convertAddressList(validation.data.normalizedAddresses);
-  
-  // (c) 先頭 = origin、残り = destinations として分割
-  const [origin, ...destinations] = convertedStops;
-  
-  // (d) RouteOptimizeInputSchema 準拠の payload を生成
-  const payload = {
-    origin,
-    destinations: destinations.slice(0, 30), // 最大30件制限
-    options: { strategy: 'quality' as const } // デフォルト設定
-  };
-
-  // (e) tRPC ミューテーションを実行
-  return await optimizeMutation.mutateAsync(payload);
-};
+**確認コマンド**:
+```bash
+pnpm --filter web test page.test
 ```
 
-**重要**: `convertAddressList` は前提条件のタスク3-4で実装済みの Server Action を想定。住所文字列配列 → `RouteStop[]`（座標付き）への変換を担当。
+→ この時点では**テスト失敗（Red）**が正常。
 
-##### 4. ローカル state を React Query の状態に置き換える
+###### 1-2. Green: 最小実装
 
-以下のローカル state を削除：
+以下を実装して Red を Green にする：
 
-```typescript
-// 削除
-const [status, setStatus] = useState<OptimizationStatus>('idle');
-const [result, setResult] = useState<RouteOptimizeResult | null>(null);
-const [statusError, setStatusError] = useState<string | null>(null);
-```
+**実装内容**:
+- tRPC の `route.optimize.useMutation()` フックを初期化
+- mutation の `isPending` 状態をボタンの disabled 属性に連携
+- `isPending` が true のときボタンのテキストを「最適化中…」に変更
+- `isPending` に応じてプログレスバーを条件付きレンダリング
+- 既存の `runOptimization` 関数内で mutation を呼び出す（この時点では空の payload でも可）
 
-React Query の状態を利用：
+**注意点**:
+- まだ実際のデータ取得は実装しなくてよい（mutation を呼ぶだけで pending 状態になる）
+- 既存のローカル state（`status`, `result`, `statusError`）は残しておいてよい
 
-```typescript
-// 追加
-const { 
-  status: mutationStatus, 
-  data: result, 
-  error, 
-  isPending,
-  reset 
-} = optimizeMutation;
-
-// status の導出
-const status: OptimizationStatus = isPending 
-  ? 'running' 
-  : error 
-    ? 'error' 
-    : result 
-      ? 'success' 
-      : 'idle';
-
-const statusError = error?.message ?? null;
-```
-
-UI の分岐を `isPending`, `status`, `data`, `error` に揃えることで、Red で書いた状態遷移テストを Green に近づける。
-
-##### 5. ダミーデータ依存の UI 分岐を実データに置き換える
-
-以下の変更を実施：
-
-- **フォールバック判定**: `fallback` キーワードではなく、`result?.diagnostics.fallbackUsed` を直接参照
-- **RouteMap への props**: `result.geoJson`（ダミーシナリオではなく API レスポンス）を渡す
-- **説明文の削除/退避**: 「`fallback` キーワードを含めるとフォールバック UI も再現できます」というヒーロー文言を削除（またはデモ専用ページへ移動）
-
-```typescript
-// 変更前
-<RouteMap geoJson={result.geoJson} ... />
-
-// 変更後（型安全性を保証）
-{result ? (
-  <RouteMap geoJson={result.geoJson} ... />
-) : (
-  <MapPlaceholder status={status} />
-)}
-```
-
-##### 6. デモシナリオファイルの削除と影響範囲の確認
-
-**削除対象**:
-- `apps/web/src/demo/route-scenarios.ts`
-
-**影響確認が必要なファイル**:
-- E2E テスト（`apps/web/tests/e2e/*.spec.ts`）: 現在 `fallback` キーワードに依存しているため、MSW の実ハンドラを使った検証に書き換えが必要
-- 他のテストやコンポーネントで `selectDemoScenario` を import していないか grep で確認
+###### 1-3. 確認
 
 ```bash
-# 影響確認コマンド
+pnpm --filter web test page.test
+pnpm typecheck
+```
+
+→ サイクル1のテストが**全て Green**になることを確認。
+
+---
+
+##### サイクル2: 成功時の結果描画 (Red → Green)
+
+###### 2-1. Red: テストを追加
+
+`apps/web/app/page.test.tsx` に**成功ケースのテストのみ**を追加：
+
+**テストケース**:
+- 最適化成功後、`RouteMap` コンポーネントが表示されること（`data-testid="map-container"` の存在確認）
+- 訪問順序リストが表示されること（`screen.getByRole('list')` など）
+- 合計距離と時間が表示されること
+
+**MSW 設定**:
+- デフォルトハンドラ（成功レスポンス）を使用
+- tRPC 経由で実際の API ルーターを通す
+
+**確認コマンド**:
+```bash
+pnpm --filter web test page.test
+```
+
+→ この時点では**テスト失敗（Red）**が正常。
+
+###### 2-2. Green: データ取得と結果表示の実装
+
+以下を実装して Red を Green にする：
+
+**実装内容**:
+- `runOptimization` 関数を完全実装：
+  - フォームの `rawInput` を `AddressListSchema` でバリデーション
+  - Server Action `convertAddressList` で住所 → 座標変換（Geocode）
+  - 先頭を origin、残りを destinations として分割
+  - `RouteOptimizeInputSchema` 準拠の payload を生成（最大30件制限、strategy: 'quality'）
+  - mutation の `mutateAsync` を実行
+- mutation の `data` を `result` として取り出し、既存の UI コンポーネント（`RouteMap`, 訪問順序リスト）に props として渡す
+- 擬似レイテンシ `wait(900)` を削除
+
+**注意点**:
+- 既存のローカル state `result` を mutation.data で置き換える
+- `selectDemoScenario` の呼び出しを削除
+- 既存の UI コンポーネントはそのまま利用（props の型が一致しているため）
+
+###### 2-3. 確認
+
+```bash
+pnpm --filter web test page.test
+pnpm typecheck
+```
+
+→ サイクル1-2のテストが**全て Green**になることを確認。
+
+---
+
+##### サイクル3: 失敗時のエラー表示 (Red → Green)
+
+###### 3-1. Red: テストを追加
+
+`apps/web/app/page.test.tsx` に**失敗ケースのテストのみ**を追加：
+
+**テストケース**:
+- 最適化失敗時、エラーアラート（`role="alert"`）が表示されること
+- エラーメッセージが表示されること
+- 再実行ボタンが有効になること
+
+**MSW 設定**:
+- テスト内で `mockServer.use(optimizerTimeoutHandler)` などを使い、エラーレスポンスを返す
+- または tRPC ルーター層でエラーをスローさせる
+
+**確認コマンド**:
+```bash
+pnpm --filter web test page.test
+```
+
+→ この時点では**テスト失敗（Red）**が正常。
+
+###### 3-2. Green: エラー処理の実装
+
+以下を実装して Red を Green にする：
+
+**実装内容**:
+- mutation の `error` を取り出し、エラーメッセージを UI に表示
+- エラー発生時に `role="alert"` 属性を持つ要素を条件付きレンダリング
+- エラー時はボタンを「再実行」テキストに変更し、有効化
+- 既存のローカル state `statusError` を mutation.error.message で置き換える
+
+**注意点**:
+- try-catch で mutation 呼び出しをラップ
+- エラーは自動的に mutation.error に格納されるため、手動 setState は不要
+
+###### 3-3. 確認
+
+```bash
+pnpm --filter web test page.test
+pnpm typecheck
+```
+
+→ サイクル1-3のテストが**全て Green**になることを確認。
+
+---
+
+##### サイクル4: フォールバック UI 分岐 (Red → Green)
+
+###### 4-1. Red: テストを追加
+
+`apps/web/app/page.test.tsx` に**フォールバックケースのテストのみ**を追加：
+
+**テストケース**:
+- `diagnostics.fallbackUsed` が true のレスポンスを受け取った場合、フォールバック通知（`data-testid="fallback-notice"`）が表示されること
+- 通常の成功時にはフォールバック通知が表示されないこと
+
+**MSW 設定**:
+- テスト内で `mockServer.use(optimizerTimeoutHandler)` を使い、fallbackUsed: true のレスポンスを返す
+
+**確認コマンド**:
+```bash
+pnpm --filter web test page.test
+```
+
+→ この時点では**テスト失敗（Red）**が正常。
+
+###### 4-2. Green: フォールバック判定の実装
+
+以下を実装して Red を Green にする：
+
+**実装内容**:
+- `result?.diagnostics.fallbackUsed` を参照してフォールバック通知を条件付きレンダリング
+- `fallback` キーワードによる UI 強制分岐ロジックを削除
+- 実データの `diagnostics` フィールドのみを信頼する
+
+**注意点**:
+- 既存の UI コンポーネントで fallback キーワードに依存している箇所があれば削除
+- ヒーロー文言「`fallback` キーワードを含めると...」を削除またはコメントアウト
+
+###### 4-3. 確認
+
+```bash
+pnpm --filter web test page.test
+pnpm typecheck
+```
+
+→ サイクル1-4のテストが**全て Green**になることを確認。
+
+---
+
+##### サイクル5: Retry 機能 (Red → Green)
+
+###### 5-1. Red: テストを追加
+
+`apps/web/app/page.test.tsx` に**Retry ケースのテストのみ**を追加：
+
+**テストケース**:
+- エラー発生後、「再実行」ボタンをクリックすると再度最適化が実行されること
+- 再実行後、前回のエラーがクリアされること
+- 再実行で成功した場合、正常な結果が表示されること
+
+**検証方法**:
+- MSW でエラーレスポンスを返す
+- エラー表示を確認
+- `mockServer.use()` で成功ハンドラに差し替え
+- 「再実行」ボタンをクリック
+- 成功結果が表示されることを確認
+
+**確認コマンド**:
+```bash
+pnpm --filter web test page.test
+```
+
+→ この時点では**テスト失敗（Red）**が正常。
+
+###### 5-2. Green: Retry ハンドラの実装
+
+以下を実装して Red を Green にする：
+
+**実装内容**:
+- `handleRetry` 関数を実装：
+  - mutation の `reset()` を呼び出して前回のエラーをクリア
+  - `runOptimization()` を再実行
+  - pending 中は Retry ボタンを disabled にする
+- フォームの `handleSubmit` を mutation ベースに更新：
+  - 手動 setState を削除
+  - mutation の状態を UI に反映
+  - エラーハンドリングは mutation.error に委譲
+
+**注意点**:
+- 既存のローカル state `status` を mutation の状態から導出する形に置き換える
+- `isPending`, `error`, `data` を組み合わせて `OptimizationStatus` を導出
+
+###### 5-3. 確認
+
+```bash
+pnpm --filter web test page.test
+pnpm typecheck
+```
+
+→ サイクル1-5のテストが**全て Green**になることを確認。
+
+---
+
+##### サイクル6: デモシナリオ削除と最終調整 (Refactor)
+
+###### 6-1. 影響範囲の確認
+
+以下のコマンドで `selectDemoScenario` への依存を確認：
+
+```bash
 pnpm exec grep -r "route-scenarios" apps/web/
 pnpm exec grep -r "selectDemoScenario" apps/web/
 ```
 
-##### 7. フォームの Submit ハンドラを mutation ベースに更新
+**削除対象**:
+- `apps/web/src/demo/route-scenarios.ts`
+- `selectDemoScenario` の import
+- デモ専用の説明文やヒーロー文言
 
-`handleSubmit` と `handleRetry` を以下のように変更：
+**影響確認が必要**:
+- E2E テスト（`apps/web/tests/e2e/*.spec.ts`）が `fallback` キーワードに依存していないか
 
-```typescript
-const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-  event.preventDefault();
-  
-  if (!validationResult.success || isPending) {
-    return;
-  }
+###### 6-2. 削除とクリーンアップ
 
-  try {
-    await runOptimization();
-    // mutation の状態は自動更新されるため、手動 setState は不要
-  } catch (error) {
-    console.error('Optimization failed:', error);
-    // エラーは mutation.error として UI に反映される
-  }
-};
+以下を実施：
 
-const handleRetry = async () => {
-  if (!isValid || isPending) {
-    return;
-  }
-  
-  reset(); // 前回のエラーをクリア
-  await runOptimization();
-};
-```
+**削除内容**:
+- `apps/web/src/demo/route-scenarios.ts` ファイルを削除
+- page.tsx から `selectDemoScenario` の import と呼び出しを削除
+- 全てのローカル state（`status`, `result`, `statusError`）を削除し、mutation の状態のみを使用
+- デモ用の説明文やコメントを削除
 
-エラーは `mutation.error` を表示し、成功時は `mutation.data` を `RouteMap` 用 props に渡して UI とテストの期待をそろえる。
+**最終確認**:
+- tRPC mutation のみで状態管理が完結していること
+- ダミーデータへの参照が0件であること
+- 実データ経路で UI が正しく動作すること
 
-##### 8. テストを実行して Green を確認
+###### 6-3. 全体テストの実行
 
 ```bash
 # 単体テスト（MSW 含む）
@@ -207,34 +324,44 @@ pnpm --filter web test
 # 型チェック
 pnpm typecheck
 
-# E2E テスト（MSW ワーカーまたは実サービス起動が必要）
+# Lint
+pnpm lint
+
+# E2E テスト（実サービス起動が必要）
 pnpm --filter web e2e
 ```
 
-以下を確認：
+**確認項目**:
+- [ ] 全ての単体テストが Green
+- [ ] `selectDemoScenario` への参照が 0 件
+- [ ] 型エラー・Lint エラーが 0 件
+- [ ] E2E テストが実データ経路で動作
 
-- [ ] Red で書いたシナリオが全て Green になる
-- [ ] ダミーデータ由来の分岐が残っていない（`selectDemoScenario` への参照が 0 件）
-- [ ] E2E テストが実データ経路で動作する
-- [ ] Linter/型エラーが発生していない
+---
 
-##### 9. 環境変数と相関IDの最終確認
+##### 補足: 環境変数と相関ID
 
 **環境変数**:
-- `.env.local` が正しく設定されているか `loadEnv()` の実行で確認
-- `NEXT_PUBLIC_MAPBOX_TOKEN` が `RouteMap` で参照可能か確認
-- `SUPABASE_*` 未設定でも開発時は動作（保存はインメモリ）。本番では URL とキーの設定が必要
+- `.env.local` が正しく設定されているか確認
+- `NEXT_PUBLIC_MAPBOX_TOKEN` が RouteMap で参照可能か確認
+- `SUPABASE_*` 未設定でも開発時は動作（保存はインメモリ）
 
 **相関ID**:
 - tRPC の `createContext` で `x-request-id` ヘッダーから `correlationId` を抽出していることを確認（`packages/api/src/middleware/correlation.ts` 参照）
 - ブラウザの Network タブで tRPC リクエストにヘッダーが付与されているか確認
 
-##### 10. E2E テストの更新（TDD 対象外だが動作確認が必要）
+---
+
+##### 補足: E2E テストの更新（必要に応じて）
 
 `apps/web/tests/e2e/optimize.spec.ts` と `fallback.spec.ts` を以下のように更新：
 
-- **常に4件の前提を撤廃**: 結果件数を動的に検証（`await expect(page.locator('[data-testid="stop-list"] li')).toHaveCount(...)` → `toBeGreaterThan(0)` など）
-- **`fallback` キーワード依存の削除**: MSW で Optimizer タイムアウトを再現し、実際の fallback レスポンスを検証
-- **履歴表示の前提更新**: Week 3 で実装予定の履歴機能を考慮した構造に（現時点では Skip 可）
+**更新内容**:
+- 常に4件の前提を撤廃し、結果件数を動的に検証（`toBeGreaterThan(0)` など）
+- `fallback` キーワード依存を削除し、MSW で Optimizer タイムアウトを再現
+- 実際の fallback レスポンスを検証
+- 履歴表示の前提を Week 3 実装予定に合わせて調整（現時点では Skip 可）
 
-これで Week2.5_1 の実装手順が完了します。
+---
+
+これで Week2.5_1 の実装手順が完了します。各サイクルで Red → Green → 確認を回すことで、段階的かつ安全に実装を進められます。

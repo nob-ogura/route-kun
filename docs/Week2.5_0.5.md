@@ -23,7 +23,7 @@
   - Server Action 内で住所文字列 → 座標解決（Google Geocode API）
   - タイムアウト（6s）、リトライ（0.5s→1.5s）、429/該当なしのエラーハンドリング
   - MSW の Google Geocode ハンドラを使った単体テスト
-  - 座標キャッシュ（Supabase or メモリ、TTL 24h）の実装
+  - 座標キャッシュ（メモリ、TTL 24h）の実装
 - [ ] **環境変数の整備**
   - `.env.local` に以下を設定: `GOOGLE_MAPS_API_KEY`, `OPTIMIZER_SERVICE_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_MAPBOX_TOKEN`
   - `packages/config` の `EnvSchema` による検証が通ること
@@ -81,7 +81,6 @@
     - タイムアウト: `vi.useFakeTimers()` で 6s 経過させると `AbortError` を握りつぶしてドメインエラーへ変換。
   - `apps/web/app/actions/geocode-cache.test.ts`
     - `InMemoryGeocodeCache` が 24h TTL を過ぎると再取得すること、期限内なら同じ緯度経度を返して fetch を 1 度しか呼ばないことを検証。
-    - 将来 Supabase 版に差し替えられるよう `GeocodeCache` インターフェースの契約テストを用意。
   - `apps/web/app/actions/convert-address-list.integration.test.ts`
     - MSW で geocode をスタブし、タスク2 の server action から実際に RouteStop[] が返り `origin.label` が元住所文字列になることを確認。
 - Green
@@ -91,7 +90,7 @@
     - 429/500/ネットワーク例外はカスタム `GeocodeError` にラップして server action で捕捉。
   - `apps/web/app/actions/geocode-cache.ts`
     - 初期実装はメモリ Map（key = 正規化住所、value = { coordinates, expiresAt }）。`globalThis` にぶら下げて Server Action の複数インスタンスでも共有。
-    - 将来 Supabase へ切り替える際の足がかりとして `get(address)` / `set(address, coordinates)` を Promise API で定義し、TTL を `Date.now() + 24h` で管理。
+    - `get(address)` / `set(address, coordinates)` を定義し、TTL を `Date.now() + 24h` で管理。
   - `convert-address-list.ts` に geocode 呼び出しとキャッシュ利用を組み込み、MSW で Red にしたテストを Green。
 - Refactor
   - 共通のフェッチラッパー（`withRetries(fetcher, { retries: 2, delays: [500, 1500] })`）を抽出し、Optimizer クライアントでも流用できるようにする。

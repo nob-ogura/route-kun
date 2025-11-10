@@ -10,6 +10,7 @@ import {
 } from '@route-kun/domain';
 
 import { geocodeAddresses } from './geocode-client';
+import { getGeocodeCache } from './geocode-cache';
 
 const MAX_DESTINATIONS = 30;
 const MAX_ADDRESS_COUNT = MAX_DESTINATIONS + 1;
@@ -35,7 +36,9 @@ export async function convertAddressList(
 
   assertAddressCountWithinLimit(normalizedAddresses.length);
 
-  const coordinates = await geocodeAddresses(normalizedAddresses);
+  const coordinates = await geocodeAddresses(normalizedAddresses, {
+    cache: getGeocodeCache()
+  });
 
   if (coordinates.length !== normalizedAddresses.length) {
     throw new TRPCError({

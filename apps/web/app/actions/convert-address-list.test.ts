@@ -55,7 +55,12 @@ describe('convertAddressList', () => {
       expect(RouteStopSchema.parse(stop).id).toBe(`stop-${index + 1}`);
     });
     expect(geocodeAddressesMock).toHaveBeenCalledTimes(1);
-    expect(geocodeAddressesMock).toHaveBeenCalledWith(addresses);
+    expect(geocodeAddressesMock).toHaveBeenCalledWith(
+      addresses,
+      expect.objectContaining({
+        cache: expect.anything()
+      })
+    );
   });
 
   it('deduplicates addresses before invoking geocode', async () => {
@@ -69,10 +74,12 @@ describe('convertAddressList', () => {
     expect(result.origin.label).toBe('東京都千代田区丸の内1-9-1');
     expect(result.destinations[0]?.label).toBe('大阪府大阪市北区梅田3-1-1');
     expect(geocodeAddressesMock).toHaveBeenCalledTimes(1);
-    expect(geocodeAddressesMock).toHaveBeenCalledWith([
-      '東京都千代田区丸の内1-9-1',
-      '大阪府大阪市北区梅田3-1-1'
-    ]);
+    expect(geocodeAddressesMock).toHaveBeenCalledWith(
+      ['東京都千代田区丸の内1-9-1', '大阪府大阪市北区梅田3-1-1'],
+      expect.objectContaining({
+        cache: expect.anything()
+      })
+    );
     expect(randomUUIDSpy).toHaveBeenCalledTimes(2);
   });
 

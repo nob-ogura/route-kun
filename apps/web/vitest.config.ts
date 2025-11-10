@@ -10,7 +10,13 @@ export default defineConfig({
   resolve: {
     alias: {
       '@route-kun/domain': resolveFromRoot('../../packages/domain/src'),
-      '@route-kun/api': resolveFromRoot('../../packages/api/src')
+      '@route-kun/api': resolveFromRoot('../../packages/api/src'),
+      '@route-kun/msw': resolveFromRoot('../../packages/msw/src'),
+      '@route-kun/msw/server': resolveFromRoot('../../packages/msw/src/server.ts'),
+      '@route-kun/msw/fixtures': resolveFromRoot('../../packages/msw/src/fixtures'),
+      '@route-kun/msw/fixtures/*': resolveFromRoot('../../packages/msw/src/fixtures/*'),
+      '@route-kun/msw/handlers': resolveFromRoot('../../packages/msw/src/handlers'),
+      '@route-kun/msw/handlers/*': resolveFromRoot('../../packages/msw/src/handlers/*')
     }
   },
   test: {
