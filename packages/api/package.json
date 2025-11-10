@@ -20,6 +20,7 @@
     "@route-kun/optimizer-client": "workspace:*",
     "@route-kun/supabase": "workspace:*",
     "@trpc/server": "^10.45.2",
+    "superjson": "^2.2.5",
     "zod": "^3.23.8"
   },
   "devDependencies": {

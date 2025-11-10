@@ -9,13 +9,19 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      '@route-kun/domain': resolveFromRoot('../../packages/domain/src')
+      '@route-kun/domain': resolveFromRoot('../../packages/domain/src'),
+      '@route-kun/api': resolveFromRoot('../../packages/api/src')
     }
   },
   test: {
     environment: 'jsdom',
     setupFiles: [resolveFromRoot('./vitest.setup.ts')],
     include: ['app/**/*.test.{ts,tsx}', 'components/**/*.test.{ts,tsx}'],
-    globals: true
+    globals: true,
+    env: {
+      NEXT_PUBLIC_MAPBOX_TOKEN: 'test-map-token',
+      GOOGLE_MAPS_API_KEY: 'test-geocode-token',
+      OPTIMIZER_SERVICE_URL: 'http://localhost:8001'
+    }
   }
 });

@@ -21,6 +21,7 @@ import {
 } from '@route-kun/optimizer-client';
 import { initTRPC, TRPCError } from '@trpc/server';
 import { z } from 'zod';
+import superjson from 'superjson';
 
 import { createSupabaseClient, Json, RouteAlgorithm } from '@route-kun/supabase';
 
@@ -46,7 +47,9 @@ type AppRouterContext = {
   correlationId?: string;
 };
 
-const t = initTRPC.context<AppRouterContext>().create();
+const t = initTRPC.context<AppRouterContext>().create({
+  transformer: superjson
+});
 
 const correlationMiddleware = t.middleware(async ({ ctx, path, type, next }) => {
   const correlationId = ctx.correlationId ?? generateCorrelationId();
