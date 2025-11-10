@@ -55,7 +55,7 @@
   - Client Provider 内の `QueryClient` 作成を `useState` に包み、テストがキャッシュリークしないようにする。
   - 後続の UI テストから再利用できる `createTestTRPCClient()` を `apps/web/src/lib/trpc.test-utils.ts` に切り出し。
 
-##### タスク2: 住所リスト変換 Server Action
+##### タスク2: 住所リスト変換 Server Action (convertAddressList)
 
 - Red
   - `apps/web/app/actions/convert-address-list.test.ts`
@@ -66,9 +66,9 @@
 - Green
   - `apps/web/app/actions/convert-address-list.ts` を server-only で実装し、`AddressListSchema` → `normalizedAddresses` → `splitOriginAndDestinations` → `geocodeAddresses()` の流れを作る。
   - 1 行目を origin、残りを destinations に分割し、30 件上限をガード。`createRouteStop(label, coordinates)` のヘルパーで ID/label を組み立てる。
-  - `geocodeAddresses` は Task4 で実装するため、現時点ではモックフレンドリーなインターフェースだけ定義してテストで差し替える。
+  - `geocodeAddresses` は タスク3 で実装するため、現時点ではモックフレンドリーなインターフェースだけ定義してテストで差し替える。
 - Refactor
-  - `splitAddressList` や `assertDestinationLimit` を純粋関数に分け、Task4 の geocode テストからも流用。
+  - `splitAddressList` や `assertDestinationLimit` を純粋関数に分け、タスク3 の geocode テストからも流用。
   - `RouteStop[]` の shape を `type ConvertedAddressList = { origin: RouteStop; destinations: RouteStop[] }` として export し、後続の最適化 Server Action へ渡しやすくする。
 
 ##### タスク3: Google Geocode 統合
@@ -83,7 +83,7 @@
     - `InMemoryGeocodeCache` が 24h TTL を過ぎると再取得すること、期限内なら同じ緯度経度を返して fetch を 1 度しか呼ばないことを検証。
     - 将来 Supabase 版に差し替えられるよう `GeocodeCache` インターフェースの契約テストを用意。
   - `apps/web/app/actions/convert-address-list.integration.test.ts`
-    - MSW で geocode をスタブし、Task3 の server action から実際に RouteStop[] が返り `origin.label` が元住所文字列になることを確認。
+    - MSW で geocode をスタブし、タスク2 の server action から実際に RouteStop[] が返り `origin.label` が元住所文字列になることを確認。
 - Green
   - `apps/web/app/actions/geocode-client.ts`
     - `fetch` + `AbortController` で 6s タイムアウト、0.5s/1.5s バックオフを実装。`GOOGLE_MAPS_API_KEY` を `loadEnv` から取得し、`URLSearchParams` でエンコード。
